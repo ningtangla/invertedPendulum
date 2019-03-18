@@ -6,19 +6,24 @@ import env
 import reward
 import dataSave 
 
-def fowardModel(inputValue, inputVar, outputVar, model):
-    outputValue = model.run(outputVar, feed_dict={inputVar: inputValue.reshape(1, -1)})
-    return outputValue 
+# using dict key to connect tensor variable and value
+def fowardModel(inputValue, inputVariable, outputVariable, model):
+    outVariable = [outputVariable[varName] for varName in outputVariable.keys()]
+    inputVariableValueDict = dict((inputVariable[varName], inputValue[varName]) for varName in inputVariable.keys())
+    outValue = model.run(outVariable, feed_dict = inputVariableValueDict)
+    outputValue = dict((list(outputVariable.keys())[varIndex], outValue[varIndex]) for varIndex in range(len(outValue))) 
+    return outputValue
 
 class ApproximatePolicy():
-    def __init__(self, actionSpace, inputVar, outputVar):
+    def __init__(self, actionSpace, inputVariable, outputVariable):
         self.actionSpace = actionSpace
         self.numActionSpace = len(self.actionSpace)
-        self.inputVar = inputVar
-        self.outputVar = outputVar
+        self.inputVariable = inputVariable
+        self.outputVariable = outputVariable
     def __call__(self, state, model):
-        #__import__('ipdb').set_trace()
-        actionDistribution = fowardModel(state, self.inputVar['state_'], self.outputVar['actionDistribution_'], model)
+        inputValue = {'state' : state.reshape(1, -1)}
+        outputValue = fowardModel(inputValue, self.inputVariable, self.outputVariable, model)
+        actionDistribution = outputValue['actionDistribution']
         actionLabel = np.random.choice(range(self.numActionSpace), p = actionDistribution.ravel())  # select action w.r.t the actions prob
         action = self.actionSpace[actionLabel]
         return action
@@ -61,12 +66,12 @@ def normalize(accumulatedRewards):
     return normalizedAccumulatedRewards
 
 class TrainTensorflow():
-    def __init__(self, actionSpace, inputVar, outputVar, summaryPath):
+    def __init__(self, actionSpace, inputVariable, outputVariable, summaryPath):
         self.actionSpace = actionSpace
         self.numActionSpace = len(actionSpace)
         self.summaryWriter = tf.summary.FileWriter(summaryPath)
-        self.inputVar = inputVar
-        self.outputVar = outputVar
+        self.inputVariable = inputVariable
+        self.outputVariable = outputVariable
     def __call__(self, episode, normalizedAccumulatedRewardsEpisode, model):
         mergedEpisode = np.concatenate(episode)
         numBatch = len(mergedEpisode)
@@ -75,11 +80,9 @@ class TrainTensorflow():
         actionLabelBatch = np.zeros([numBatch, self.numActionSpace])
         actionLabelBatch[np.arange(numBatch), actionIndexBatch] = 1 
         accumulatedRewardsBatch = np.concatenate(normalizedAccumulatedRewardsEpisode)
-        loss, trainOpt = model.run([self.outputVar['loss_'], self.outputVar['trainOpt_']], feed_dict={self.inputVar['state_']: np.vstack(np.array(stateBatch)),
-                                                                                                    self.inputVar['actionLabel_']: np.vstack(np.array(actionLabelBatch)),
-                                                                                                    self.inputVar['accumulatedRewards_']: accumulatedRewardsBatch
-                                                                                                    })
-    
+        inputValue = {'state' : np.vstack(stateBatch), 'actionLabel' : np.vstack(actionLabelBatch), 'accumulatedRewards' : accumulatedRewardsBatch}
+        outputValue = fowardModel(inputValue, self.inputVariable, self.outputVariable, model) 
+        loss = outputValue['loss']
         self.summaryWriter.flush()
         return loss, model
 
@@ -157,16 +160,16 @@ def main():
     
     mergedSummary = tf.summary.merge_all()
     
-    inputApproximatePolicy = {'state_' : state_}
-    outputApproximatePolicy = {'actionDistribution_' : actionDistribution_}
+    inputVariableApproximatePolicy = {'state' : state_}
+    outputVariableApproximatePolicy = {'actionDistribution' : actionDistribution_}
     
-    inputTrain = {'state_' : state_, 'actionLabel_' : actionLabel_, 'accumulatedRewards_' : accumulatedRewards_}
-    outputTrain = {'loss_' : loss_, 'trainOpt_' : trainOpt_}
+    inputVariableTrain = {'state' : state_, 'actionLabel' : actionLabel_, 'accumulatedRewards' : accumulatedRewards_}
+    outputVariableTrain = {'loss' : loss_, 'trainOpt' : trainOpt_}
 
     with tf.Session() as model:
         model.run(tf.global_variables_initializer())    
 
-        approximatePolicy = ApproximatePolicy(actionSpace, inputApproximatePolicy, outputApproximatePolicy)
+        approximatePolicy = ApproximatePolicy(actionSpace, inputVariableApproximatePolicy, outputVariableApproximatePolicy)
 
         transitionFunction = env.TransitionFunction(envModelName, renderOpen)
         isTerminal = env.IsTerminal(maxQPos)
@@ -176,7 +179,7 @@ def main():
         rewardFunction = reward.RewardFunction(aliveBouns) 
         accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
-        train = TrainTensorflow(actionSpace, inputTrain, outputTrain,summaryPath) 
+        train = TrainTensorflow(actionSpace, inputVariableTrain, outputVariableTrain,summaryPath) 
 
         policyGradient = PolicyGradient(numTrajectory, maxEpisode)
 

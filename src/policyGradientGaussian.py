@@ -6,18 +6,21 @@ import cartpole_env
 import reward
 import dataSave 
 
-def fowardModel(inputValue, inputVar, outputVar, model):
-    outputValue = model.run(outputVar, feed_dict={inputVar: inputValue.reshape(1, -1)})
+
+def fowardModel(inputValue, inputVariable, outputVariable, model):
+    outVar = [outputVar[varName] for varName in outputVariable.keys()]
+    inputVariableValuePair = dict((inputVariable[varName], np.vstack(inputValue[varName])) for varName in inputVariable.keys())
+    outValue = model.run(outVar, feed_dict = inputVariableValuePair)
+    outputVarValuePair = dict((outVaiable[varIndex], outValue[varIndex]) for varIndex in range(len(outVar))) 
     return outputValue 
 
 class ApproximatePolicy():
     def __init__(self, variance, inputVar, outputVar):
-        self.variance = variance
+        self.actionVaricen = actionVariance
         self.inputVar = inputVar
         self.outputVar = outputVar
     def __call__(self, state, model):
-        #__import__('ipdb').set_trace()
-        mean = model.run(self.outputVar['mean_'], feed_dict={self.inputVar['state_']: state, self.inputVar['variance_']: self.variance})
+        actionMean = model.run(self.outputVar['actionMean_'], feed_dict={self.inputVar['state_']: state, self.inputVar['variance_']: self.variance})
         action = np.random.normal(mean, self.variance)
         print(action)
         return action
