@@ -1,2 +1,2 @@
-model_checkpoint_path: "tmpModel.ckpt"
-all_model_checkpoint_paths: "tmpModel.ckpt"
+model_checkpoint_path: "tmpModelGaussian.ckpt"
+all_model_checkpoint_paths: "tmpModelGaussian.ckpt"

@@ -6,26 +6,17 @@ import env
 import reward
 import dataSave 
 
-# using dict key to connect tensor variable and value
-def fowardModel(inputValue, inputVariable, outputVariable, model):
-    outVariable = [outputVariable[varName] for varName in outputVariable.keys()]
-    inputVariableValueDict = dict((inputVariable[varName], inputValue[varName]) for varName in inputVariable.keys())
-    outValue = model.run(outVariable, feed_dict = inputVariableValueDict)
-    outputValue = dict((list(outputVariable.keys())[varIndex], outValue[varIndex]) for varIndex in range(len(outValue))) 
-    return outputValue
-
 class ApproximatePolicy():
-    def __init__(self, actionSpace, inputVariable, outputVariable):
+    def __init__(self, actionSpace):
         self.actionSpace = actionSpace
         self.numActionSpace = len(self.actionSpace)
-        self.inputVariable = inputVariable
-        self.outputVariable = outputVariable
     def __call__(self, state, model):
-        inputValue = {'state' : state.reshape(1, -1)}
-        outputValue = fowardModel(inputValue, self.inputVariable, self.outputVariable, model)
-        actionDistribution = outputValue['actionDistribution']
-        actionLabel = np.random.choice(range(self.numActionSpace), p = actionDistribution.ravel())  # select action w.r.t the actions prob
-        action = self.actionSpace[actionLabel]
+        graph = model.graph
+        state_ = graph.get_tensor_by_name('inputs/state_:0')
+        actionDistribution_ = graph.get_tensor_by_name('outputs/actionDistribution_:0')
+        actionDistribution = model.run(actionDistribution_, feed_dict = {state_ : state.reshape(1, -1)})
+        actionIndex = np.random.choice(range(self.numActionSpace), p = actionDistribution.ravel())  # select action w.r.t the actions prob
+        action = np.array(self.actionSpace[actionIndex])
         return action
 
 class SampleTrajectory():
@@ -66,23 +57,29 @@ def normalize(accumulatedRewards):
     return normalizedAccumulatedRewards
 
 class TrainTensorflow():
-    def __init__(self, actionSpace, inputVariable, outputVariable, summaryPath):
+    def __init__(self, actionSpace, summaryPath):
         self.actionSpace = actionSpace
         self.numActionSpace = len(actionSpace)
         self.summaryWriter = tf.summary.FileWriter(summaryPath)
-        self.inputVariable = inputVariable
-        self.outputVariable = outputVariable
     def __call__(self, episode, normalizedAccumulatedRewardsEpisode, model):
         mergedEpisode = np.concatenate(episode)
         numBatch = len(mergedEpisode)
         stateBatch, actionBatch = list(zip(*mergedEpisode))
         actionIndexBatch = np.array([list(self.actionSpace).index(action) for action in actionBatch])
         actionLabelBatch = np.zeros([numBatch, self.numActionSpace])
-        actionLabelBatch[np.arange(numBatch), actionIndexBatch] = 1 
+        actionLabelBatch[np.arange(numBatch), actionIndexBatch] = 1
         accumulatedRewardsBatch = np.concatenate(normalizedAccumulatedRewardsEpisode)
-        inputValue = {'state' : np.vstack(stateBatch), 'actionLabel' : np.vstack(actionLabelBatch), 'accumulatedRewards' : accumulatedRewardsBatch}
-        outputValue = fowardModel(inputValue, self.inputVariable, self.outputVariable, model) 
-        loss = outputValue['loss']
+        
+        graph = model.graph
+        state_ = graph.get_tensor_by_name('inputs/state_:0')
+        actionLabel_ = graph.get_tensor_by_name('inputs/actionLabel_:0')
+        accumulatedRewards_ = graph.get_tensor_by_name('inputs/accumulatedRewards_:0')
+        loss_ = graph.get_tensor_by_name('outputs/loss_:0')
+        trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
+        loss, trainOpt = model.run([loss_, trainOpt_], feed_dict = {state_ : np.vstack(stateBatch),
+                                                                    actionLabel_ : np.vstack(actionLabelBatch),
+                                                                    accumulatedRewards_ : accumulatedRewardsBatch
+                                                                    })
         self.summaryWriter.flush()
         return loss, model
 
@@ -99,7 +96,7 @@ class PolicyGradient():
         return model
 
 def main():
-    actionSpace = np.arange(-3, 3.01, 0.1)
+    actionSpace = [np.array(action) for action in np.arange(-3, 3.01, 0.1)]
     numActionSpace = len(actionSpace)
     numStateSpace = 4
     
@@ -124,75 +121,51 @@ def main():
     with tf.name_scope("inputs"):
         state_ = tf.placeholder(tf.float32, [None, numStateSpace], name="state_")
         actionLabel_ = tf.placeholder(tf.int32, [None, numActionSpace], name="actionLabel_")
-        accumulatedRewards_ = tf.placeholder(tf.float32, [None,], name="accumulatedRewards_")
+        accumulatedRewards_ = tf.placeholder(tf.float32, [None, ], name="accumulatedRewards_")
 
-        # Add this placeholder for having this variable in tensorboard
-        #mean_reward_ = tf.placeholder(tf.float32 , name="mean_reward")
+    with tf.name_scope("hidden"):
+        fullyConnected1_ = tf.layers.dense(inputs = state_, units = 100, activation = tf.nn.relu)
+        fullyConnected2_ = tf.layers.dense(inputs = fullyConnected1_, units = numActionSpace, activation = tf.nn.relu)
+        fullyConnected3_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = None)
 
-        with tf.name_scope("fc1"):
-            fc1 = tf.contrib.layers.fully_connected(inputs = state_,
-                                                    num_outputs = 100,
-                                                    activation_fn=tf.nn.relu,
-                                                    weights_initializer=tf.contrib.layers.xavier_initializer())
+    with tf.name_scope("outputs"):
+        actionDistribution_ = tf.nn.softmax(fullyConnected3_, name = 'actionDistribution_')
+        neg_log_prob_ = tf.nn.softmax_cross_entropy_with_logits_v2(logits = fullyConnected3_, labels = actionLabel_)
+        loss_ = tf.reduce_sum(tf.multiply(neg_log_prob_, accumulatedRewards_), name = 'loss_')
+    tf.summary.scalar("Loss", loss_)
 
-        with tf.name_scope("fc2"):
-            fc2 = tf.contrib.layers.fully_connected(inputs = fc1,
-                                                    num_outputs = numActionSpace,
-                                                    activation_fn= tf.nn.relu,
-                                                    weights_initializer=tf.contrib.layers.xavier_initializer())
+    with tf.name_scope("train"):
+        trainOpt_ = tf.train.AdamOptimizer(learningRate, name = 'adamOpt_').minimize(loss_)
 
-        with tf.name_scope("fc3"):
-            fc3 = tf.contrib.layers.fully_connected(inputs = fc2,
-                                                    num_outputs = numActionSpace,
-                                                    activation_fn= None,
-                                                    weights_initializer=tf.contrib.layers.xavier_initializer())
-
-        with tf.name_scope("softmax"):
-            actionDistribution_ = tf.nn.softmax(fc3)
-
-        with tf.name_scope("loss"):
-            neg_log_prob = tf.nn.softmax_cross_entropy_with_logits_v2(logits = fc3, labels = actionLabel_)
-            loss_ = tf.reduce_sum(neg_log_prob * accumulatedRewards_)
-        tf.summary.scalar("Loss", loss_)
-
-        with tf.name_scope("train"):
-            trainOpt_ = tf.train.AdamOptimizer(learningRate).minimize(loss_)
-    
     mergedSummary = tf.summary.merge_all()
     
-    inputVariableApproximatePolicy = {'state' : state_}
-    outputVariableApproximatePolicy = {'actionDistribution' : actionDistribution_}
-    
-    inputVariableTrain = {'state' : state_, 'actionLabel' : actionLabel_, 'accumulatedRewards' : accumulatedRewards_}
-    outputVariableTrain = {'loss' : loss_, 'trainOpt' : trainOpt_}
+    model = tf.Session()
+    model.run(tf.global_variables_initializer())    
 
-    with tf.Session() as model:
-        model.run(tf.global_variables_initializer())    
+    approximatePolicy = ApproximatePolicy(actionSpace)
 
-        approximatePolicy = ApproximatePolicy(actionSpace, inputVariableApproximatePolicy, outputVariableApproximatePolicy)
+    transitionFunction = env.TransitionFunction(envModelName, renderOpen)
+    isTerminal = env.IsTerminal(maxQPos)
+    reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
+    sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset)
 
-        transitionFunction = env.TransitionFunction(envModelName, renderOpen)
-        isTerminal = env.IsTerminal(maxQPos)
-        reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
-        sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset)
+    rewardFunction = reward.RewardFunction(aliveBouns) 
+    accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
-        rewardFunction = reward.RewardFunction(aliveBouns) 
-        accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
+    train = TrainTensorflow(actionSpace, summaryPath) 
 
-        train = TrainTensorflow(actionSpace, inputVariableTrain, outputVariableTrain,summaryPath) 
+    policyGradient = PolicyGradient(numTrajectory, maxEpisode)
 
-        policyGradient = PolicyGradient(numTrajectory, maxEpisode)
+    trainedModel = policyGradient(model, approximatePolicy, sampleTrajectory, accumulateRewards, train)
 
-        trainedModel = policyGradient(model, approximatePolicy, sampleTrajectory, accumulateRewards, train)
+    saveModel = dataSave.SaveModel(savePath)
+    modelSave = saveModel(model)
 
-        saveModel = dataSave.SaveModel(savePath)
-        modelSave = saveModel(model)
-
-        transitionPlay = env.TransitionFunction(envModelName, renderOpen = True)
-        samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
-        policy = lambda state: approximatePolicy(state, model)
-        playEpisode = [samplePlay(policy) for index in range(5)]
-        accumulatedRewardsEpisode = [accumulateRewards(trajectory) for trajectory in playEpisode]
+    transitionPlay = env.TransitionFunction(envModelName, renderOpen = True)
+    samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
+    policy = lambda state: approximatePolicy(state, model)
+    playEpisode = [samplePlay(policy) for index in range(5)]
+    accumulatedRewardsEpisode = [accumulateRewards(trajectory) for trajectory in playEpisode]
 
 if __name__ == "__main__":
     main()

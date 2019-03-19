@@ -29,13 +29,14 @@ def cartpole_transition_function(state, action, renderOn=False):
     
     return state
 
-def cartpole_continuous_action_transition_function(state, action:float, renderOn=False):
+def cartpole_continuous_action_transition_function(state, actionArray, renderOn=False):
     # copied from gym src code
+    action = actionArray[0]
     assert(action >= -1.0 and action  <= 1.0)
     x, x_dot, theta, theta_dot = state
     
     #force = env.force_mag if action==1 else -env.force_mag
-    force = (action*2.0 - 1.0)*env.force_mag
+    force = (action)*env.force_mag
     #force = action*env.force_mag
     
     
