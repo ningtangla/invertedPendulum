@@ -2,6 +2,8 @@ import numpy as np
 import math
 from gym.envs.classic_control import CartPoleEnv
 env = CartPoleEnv()
+#env.seed(123)
+#np.random.seed(123)
 
 def cartpole_transition_function(state, action, renderOn=False):
     # copied from gym src code
@@ -32,7 +34,7 @@ def cartpole_transition_function(state, action, renderOn=False):
 def cartpole_continuous_action_transition_function(state, actionArray, renderOn=False):
     # copied from gym src code
     action = actionArray[0]
-    assert(action >= -1.0 and action  <= 1.0)
+    #assert(action >= -1.0 and action  <= 1.0)
     x, x_dot, theta, theta_dot = state
     
     #force = env.force_mag if action==1 else -env.force_mag

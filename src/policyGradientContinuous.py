@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 import gym
 import functools as ft
@@ -11,7 +12,9 @@ def approximatePolicy(state, model):
     graph = model.graph
     state_ = graph.get_tensor_by_name('inputs/state_:0')
     actionSample_ = graph.get_tensor_by_name('outputs/actionSample_:0')
-    action = model.run(actionSample_, feed_dict = {state_ : state.reshape(1, -1)})
+    actionSample = model.run(actionSample_, feed_dict = {state_ : state.reshape(1, -1)})
+    action = actionSample[0]
+    #actionSample_: batch * action dimension ; action only need action dimension
     return action
 
 class SampleTrajectory():
@@ -26,7 +29,7 @@ class SampleTrajectory():
         trajectory = []
         
         for time in range(self.maxTimeStep): 
-            action = policyFunction(oldState) 
+            action = policyFunction(oldState)
             newState = self.transitionFunction(oldState, action)
             trajectory.append((oldState, action))
             
@@ -44,7 +47,7 @@ class AccumulateRewards():
     def __call__(self, trajectory):
         rewards = [self.rewardFunction(state, action) for state, action in trajectory]
         accumulateReward = lambda accumulatedReward, reward: self.decay * accumulatedReward + reward
-        accumulatedRewards = [ft.reduce(accumulateReward, reversed(rewards[TimeT: ])) for TimeT in range(len(rewards))]
+        accumulatedRewards = np.array([ft.reduce(accumulateReward, reversed(rewards[TimeT: ])) for TimeT in range(len(rewards))])
         return accumulatedRewards
 
 def normalize(accumulatedRewards):
@@ -52,8 +55,8 @@ def normalize(accumulatedRewards):
     return normalizedAccumulatedRewards
 
 class TrainTensorflow():
-    def __init__(self, summaryPath):
-        self.summaryWriter = tf.summary.FileWriter(summaryPath)
+    def __init__(self, summaryWriter):
+        self.summaryWriter = summaryWriter
     def __call__(self, episode, normalizedAccumulatedRewardsEpisode, model):
         mergedEpisode = np.concatenate(episode)
         numBatch = len(mergedEpisode)
@@ -61,6 +64,14 @@ class TrainTensorflow():
         accumulatedRewardsBatch = np.concatenate(normalizedAccumulatedRewardsEpisode)
         
         graph = model.graph
+#        state_ = graph.get_tensor_by_name('inputs/state_:0')
+#        action_ = graph.get_tensor_by_name('inputs/action_:0')
+#        negLogProb_ = graph.get_tensor_by_name('outputs/Neg: 0')
+#
+#        check = model.run(negLogProb_, feed_dict = {state_ : np.vstack(stateBatch),
+#                                                    action_ : np.vstack(actionBatch),
+#                                                    })
+#        __import__('ipdb').set_trace()
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         action_ = graph.get_tensor_by_name('inputs/action_:0')
         accumulatedRewards_ = graph.get_tensor_by_name('inputs/accumulatedRewards_:0')
@@ -87,10 +98,13 @@ class PolicyGradient():
         return model
 
 def main():
+#    tf.set_random_seed(123)
+#    np.random.seed(123)
+    
     numActionSpace = 1
     numStateSpace = 4
-    actionLow = -1
-    actionHigh = 1
+    actionLow = -2
+    actionHigh = 2
     actionRatio = (actionHigh - actionLow) / 2.
 
     envModelName = 'inverted_pendulum'
@@ -103,7 +117,7 @@ def main():
     aliveBouns = 1
     rewardDecay = 1
 
-    numTrajectory = 100 
+    numTrajectory = 1000 
     maxEpisode = 3000
 
     learningRate = 0.01
@@ -116,18 +130,18 @@ def main():
         action_ = tf.placeholder(tf.float32, [None, numActionSpace], name="action_")
         accumulatedRewards_ = tf.placeholder(tf.float32, [None, ], name="accumulatedRewards_")
 
-    with tf.name_scope("hidden1"):
+    with tf.name_scope("hidden"):
         fullyConnected1_ = tf.layers.dense(inputs = state_, units = 30, activation = tf.nn.relu)
         fullyConnected2_ = tf.layers.dense(inputs = fullyConnected1_, units = 20, activation = tf.nn.relu)
         actionMean_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
         actionVariance_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = tf.nn.softplus)
 
     with tf.name_scope("outputs"):        
-        actionDistribution_ = tf.distributions.Normal(tf.squeeze(actionMean_) * actionRatio, tf.squeeze(actionVariance_) + 1e-8, name = 'actionDistribution_')
-        actionSample_ = tf.clip_by_value((actionDistribution_.sample(1)), actionLow, actionHigh, name = 'actionSample_')
-        neg_log_prob_ = - actionDistribution_.log_prob(action_)
-        loss_ = tf.reduce_sum(tf.multiply(neg_log_prob_, accumulatedRewards_), name = 'loss_')
-    tf.summary.scalar("Loss", loss_)
+        actionDistribution_ = tfp.distributions.MultivariateNormalDiag(actionMean_ * actionRatio, actionVariance_ + 1e-8, name = 'actionDistribution_')
+        actionSample_ = tf.clip_by_value(actionDistribution_.sample(), actionLow, actionHigh, name = 'actionSample_')
+        negLogProb_ = - actionDistribution_.log_prob(action_, name = 'negLogProb_')
+        loss_ = tf.reduce_sum(tf.multiply(negLogProb_, accumulatedRewards_), name = 'loss_')
+        tf.summary.scalar("Loss", loss_)
 
     with tf.name_scope("train"):
         trainOpt_ = tf.train.AdamOptimizer(learningRate, name = 'adamOpt_').minimize(loss_)
@@ -136,7 +150,8 @@ def main():
     
     model = tf.Session()
     model.run(tf.global_variables_initializer())    
-
+    summaryWriter = tf.summary.FileWriter(summaryPath, graph = model.graph)
+    
     """
     transitionFunction = env.TransitionFunction(envModelName, renderOpen)
     isTerminal = env.IsTerminal(maxQPos)
@@ -150,7 +165,7 @@ def main():
     rewardFunction = reward.RewardFunction(aliveBouns) 
     accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
-    train = TrainTensorflow(summaryPath) 
+    train = TrainTensorflow(summaryWriter) 
 
     policyGradient = PolicyGradient(numTrajectory, maxEpisode)
 
@@ -159,7 +174,7 @@ def main():
     saveModel = dataSave.SaveModel(savePath)
     modelSave = saveModel(model)
 
-    transitionPlay = env.TransitionFunction(envModelName, renderOpen = True)
+    transitionPlay = cartpole_env.cartpole_continuous_action_transition_function
     samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
     policy = lambda state: approximatePolicy(state, model)
     playEpisode = [samplePlay(policy) for index in range(5)]

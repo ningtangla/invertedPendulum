@@ -70,6 +70,15 @@ class TrainTensorflow():
         actionLabelBatch[np.arange(numBatch), actionIndexBatch] = 1
         accumulatedRewardsBatch = np.concatenate(normalizedAccumulatedRewardsEpisode)
         
+#        graph = model.graph
+#        state_ = graph.get_tensor_by_name('inputs/state_:0')
+#        actionLabel_ = graph.get_tensor_by_name('inputs/actionLabel_:0')
+#        negLogProb_ = graph.get_tensor_by_name('outputs/negLogProb_:0')
+#
+#        check = model.run(negLogProb_, feed_dict = {state_ : np.vstack(stateBatch),
+#                                                    actionLabel_ : np.vstack(actionLabelBatch),
+#                                                    })
+#        __import__('ipdb').set_trace()
         graph = model.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         actionLabel_ = graph.get_tensor_by_name('inputs/actionLabel_:0')
@@ -96,7 +105,7 @@ class PolicyGradient():
         return model
 
 def main():
-    actionSpace = [np.array(action) for action in np.arange(-3, 3.01, 0.1)]
+    actionSpace = np.vstack([np.array(action) for action in np.arange(-3, 3.01, 0.1)])
     numActionSpace = len(actionSpace)
     numStateSpace = 4
     
@@ -111,7 +120,7 @@ def main():
     rewardDecay = 1
 
     numTrajectory = 5
-    maxEpisode = 200
+    maxEpisode = 300
 
     learningRate = 0.01
     summaryPath = 'tensorBoard/1'
@@ -130,8 +139,8 @@ def main():
 
     with tf.name_scope("outputs"):
         actionDistribution_ = tf.nn.softmax(fullyConnected3_, name = 'actionDistribution_')
-        neg_log_prob_ = tf.nn.softmax_cross_entropy_with_logits_v2(logits = fullyConnected3_, labels = actionLabel_)
-        loss_ = tf.reduce_sum(tf.multiply(neg_log_prob_, accumulatedRewards_), name = 'loss_')
+        negLogProb_ = tf.nn.softmax_cross_entropy_with_logits_v2(logits = fullyConnected3_, labels = actionLabel_, name = 'negLogProb_')
+        loss_ = tf.reduce_sum(tf.multiply(negLogProb_, accumulatedRewards_), name = 'loss_')
     tf.summary.scalar("Loss", loss_)
 
     with tf.name_scope("train"):
