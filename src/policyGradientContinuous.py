@@ -8,14 +8,12 @@ import cartpole_env
 import reward
 import dataSave 
 
-def approximatePolicy(state, model):
-    graph = model.graph
+def approximatePolicy(stateBatch, actorModel):
+    graph = actorModel.graph
     state_ = graph.get_tensor_by_name('inputs/state_:0')
     actionSample_ = graph.get_tensor_by_name('outputs/actionSample_:0')
-    actionSample = model.run(actionSample_, feed_dict = {state_ : state.reshape(1, -1)})
-    action = actionSample[0]
-    #actionSample_: batch * action dimension ; action only need action dimension
-    return action
+    actionBatch = actorModel.run(actionSample_, feed_dict = {state_ : stateBatch})
+    return actionBatch
 
 class SampleTrajectory():
     def __init__(self, maxTimeStep, transitionFunction, isTerminal, reset):
@@ -24,12 +22,15 @@ class SampleTrajectory():
         self.isTerminal = isTerminal
         self.reset = reset
 
-    def __call__(self, policyFunction): 
+    def __call__(self, policy): 
         oldState = self.reset()
         trajectory = []
         
         for time in range(self.maxTimeStep): 
-            action = policyFunction(oldState)
+            oldStateBatch = oldState.reshape(1, -1)
+            actionBatch = policy(oldStateBatch) 
+            action = actionBatch[0]
+            # actionBatch shape: batch * action Dimension; only need action Dimention
             newState = self.transitionFunction(oldState, action)
             trajectory.append((oldState, action))
             
@@ -59,9 +60,9 @@ class TrainTensorflow():
         self.summaryWriter = summaryWriter
     def __call__(self, episode, normalizedAccumulatedRewardsEpisode, model):
         mergedEpisode = np.concatenate(episode)
-        numBatch = len(mergedEpisode)
-        stateBatch, actionBatch = list(zip(*mergedEpisode))
-        accumulatedRewardsBatch = np.concatenate(normalizedAccumulatedRewardsEpisode)
+        stateEpisode, actionEpisode = list(zip(*mergedEpisode))
+        stateBatch, actionBatch = np.vstack(stateEpisode), np.vstack(actionEpisode)
+        mergedAccumulatedRewardsEpisode = np.concatenate(normalizedAccumulatedRewardsEpisode)
         
         graph = model.graph
 #        state_ = graph.get_tensor_by_name('inputs/state_:0')
@@ -79,7 +80,7 @@ class TrainTensorflow():
         trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
         loss, trainOpt = model.run([loss_, trainOpt_], feed_dict = {state_ : np.vstack(stateBatch),
                                                                     action_ : np.vstack(actionBatch),
-                                                                    accumulatedRewards_ : accumulatedRewardsBatch
+                                                                    accumulatedRewards_ : mergedAccumulatedRewardsEpisode
                                                                     })
         self.summaryWriter.flush()
         return loss, model
@@ -108,7 +109,7 @@ def main():
     actionRatio = (actionHigh - actionLow) / 2.
 
     envModelName = 'inverted_pendulum'
-    renderOpen = False
+    renderOn = False
     maxTimeStep = 200
     maxQPos = 0.2
     qPosInitNoise = 0.001
@@ -118,7 +119,7 @@ def main():
     rewardDecay = 1
 
     numTrajectory = 1000 
-    maxEpisode = 3000
+    maxEpisode = 8
 
     learningRate = 0.01
     summaryPath = 'tensorBoard/1'
@@ -131,8 +132,9 @@ def main():
         accumulatedRewards_ = tf.placeholder(tf.float32, [None, ], name="accumulatedRewards_")
 
     with tf.name_scope("hidden"):
-        fullyConnected1_ = tf.layers.dense(inputs = state_, units = 30, activation = tf.nn.relu)
-        fullyConnected2_ = tf.layers.dense(inputs = fullyConnected1_, units = 20, activation = tf.nn.relu)
+    #    initWeights = tf.random_normal_initializer(0, 0.1)
+        fullyConnected1_ = tf.layers.dense(inputs = state_, units = 30, activation = tf.nn.relu) 
+        fullyConnected2_ = tf.layers.dense(inputs = fullyConnected1_, units = 20, activation = tf.nn.relu) 
         actionMean_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
         actionVariance_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = tf.nn.softplus)
 
@@ -147,17 +149,16 @@ def main():
         trainOpt_ = tf.train.AdamOptimizer(learningRate, name = 'adamOpt_').minimize(loss_)
 
     mergedSummary = tf.summary.merge_all()
-    
     model = tf.Session()
     model.run(tf.global_variables_initializer())    
     summaryWriter = tf.summary.FileWriter(summaryPath, graph = model.graph)
     
     """
-    transitionFunction = env.TransitionFunction(envModelName, renderOpen)
+    transitionFunction = env.TransitionFunction(envModelName, renderOn)
     isTerminal = env.IsTerminal(maxQPos)
     reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
     """
-    transitionFunction = cartpole_env.cartpole_continuous_action_transition_function
+    transitionFunction = cartpole_env.Cartpole_continuous_action_transition_function(renderOn = False)
     isTerminal = cartpole_env.cartpole_done_function
     reset = cartpole_env.cartpole_get_initial_state
     sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset)
@@ -174,7 +175,7 @@ def main():
     saveModel = dataSave.SaveModel(savePath)
     modelSave = saveModel(model)
 
-    transitionPlay = cartpole_env.cartpole_continuous_action_transition_function
+    transitionPlay = cartpole_env.Cartpole_continuous_action_transition_function(renderOn = True)
     samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
     policy = lambda state: approximatePolicy(state, model)
     playEpisode = [samplePlay(policy) for index in range(5)]

@@ -18,13 +18,13 @@ class Reset():
         return startState
 
 class TransitionFunction():
-    def __init__(self, modelName, renderOpen): 
+    def __init__(self, modelName, renderOn): 
         model = mujoco.load_model_from_path('xmls/' + modelName + '.xml')
         self.simulation = mujoco.MjSim(model)
         self.numQPos = len(self.simulation.data.qpos)
         self.numQVel = len(self.simulation.data.qvel)
-        self.renderOpen = renderOpen
-        if self.renderOpen:
+        self.renderOn = renderOn
+        if self.renderOn:
             self.viewer = mujoco.MjViewer(self.simulation)
     def __call__(self, oldState, action, renderOpen = False, numSimulationFrames = 1):
         oldQPos = oldState[0 : self.numQPos]
@@ -34,7 +34,7 @@ class TransitionFunction():
         self.simulation.data.ctrl[:] = action
         for i in range(numSimulationFrames):
             self.simulation.step()
-            if self.renderOpen:
+            if self.renderOn:
                 self.viewer.render()
         newQPos, newQVel = self.simulation.data.qpos, self.simulation.data.qvel
         newState = np.concatenate([newQPos, newQVel])

@@ -5,63 +5,67 @@ env = CartPoleEnv()
 #env.seed(123)
 #np.random.seed(123)
 
-def cartpole_transition_function(state, action, renderOn=False):
-    # copied from gym src code
-    assert env.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
-    x, x_dot, theta, theta_dot = state
-    force = env.force_mag if action==1 else -env.force_mag
-    costheta = math.cos(theta)
-    sintheta = math.sin(theta)
-    temp = (force + env.polemass_length * theta_dot * theta_dot * sintheta) / env.total_mass
-    thetaacc = (env.gravity * sintheta - costheta* temp) / (env.length * (4.0/3.0 - env.masspole * costheta * costheta / env.total_mass))
-    xacc  = temp - env.polemass_length * thetaacc * costheta / env.total_mass
-    if env.kinematics_integrator == 'euler':
-        x  = x + env.tau * x_dot
-        x_dot = x_dot + env.tau * xacc
-        theta = theta + env.tau * theta_dot
-        theta_dot = theta_dot + env.tau * thetaacc
-    else: # semi-implicit euler
-        x_dot = x_dot + env.tau * xacc
-        x  = x + env.tau * x_dot
-        theta_dot = theta_dot + env.tau * thetaacc
-        theta = theta + env.tau * theta_dot
-    state = np.array([x,x_dot,theta,theta_dot])
+class Cartpole_transition_function():
+    def __init__(self, renderOn):
+        self.renderOn = renderOn
+    def __call__(self, state, action):
+        # copied from gym src code
+        assert env.action_space.contains(action), "%r (%s) invalid"%(action, type(action))
+        x, x_dot, theta, theta_dot = state
+        force = env.force_mag if action==1 else -env.force_mag
+        costheta = math.cos(theta)
+        sintheta = math.sin(theta)
+        temp = (force + env.polemass_length * theta_dot * theta_dot * sintheta) / env.total_mass
+        thetaacc = (env.gravity * sintheta - costheta* temp) / (env.length * (4.0/3.0 - env.masspole * costheta * costheta / env.total_mass))
+        xacc  = temp - env.polemass_length * thetaacc * costheta / env.total_mass
+        if env.kinematics_integrator == 'euler':
+            x  = x + env.tau * x_dot
+            x_dot = x_dot + env.tau * xacc
+            theta = theta + env.tau * theta_dot
+            theta_dot = theta_dot + env.tau * thetaacc
+        else: # semi-implicit euler
+            x_dot = x_dot + env.tau * xacc
+            x  = x + env.tau * x_dot
+            theta_dot = theta_dot + env.tau * thetaacc
+            theta = theta + env.tau * theta_dot
+        state = np.array([x,x_dot,theta,theta_dot])
+        
+        if self.renderOn: cartpole_render(state)
     
-    if renderOn: cartpole_render(state)
-    
-    return state
+        return state
 
-def cartpole_continuous_action_transition_function(state, actionArray, renderOn=False):
-    # copied from gym src code
-    action = actionArray[0]
-    #assert(action >= -1.0 and action  <= 1.0)
-    x, x_dot, theta, theta_dot = state
-    
-    #force = env.force_mag if action==1 else -env.force_mag
-    force = (action)*env.force_mag
-    #force = action*env.force_mag
-    
-    
-    costheta = math.cos(theta)
-    sintheta = math.sin(theta)
-    temp = (force + env.polemass_length * theta_dot * theta_dot * sintheta) / env.total_mass
-    thetaacc = (env.gravity * sintheta - costheta* temp) / (env.length * (4.0/3.0 - env.masspole * costheta * costheta / env.total_mass))
-    xacc  = temp - env.polemass_length * thetaacc * costheta / env.total_mass
-    if env.kinematics_integrator == 'euler':
-        x  = x + env.tau * x_dot
-        x_dot = x_dot + env.tau * xacc
-        theta = theta + env.tau * theta_dot
-        theta_dot = theta_dot + env.tau * thetaacc
-    else: # semi-implicit euler
-        x_dot = x_dot + env.tau * xacc
-        x  = x + env.tau * x_dot
-        theta_dot = theta_dot + env.tau * thetaacc
-        theta = theta + env.tau * theta_dot
-    state = np.array([x,x_dot,theta,theta_dot])
-    
-    if renderOn: cartpole_render(state)
-    
-    return state
+class Cartpole_continuous_action_transition_function():
+    def __init__(self, renderOn):
+        self.renderOn = renderOn
+    def __call__(self, state, action):
+        # copied from gym src code
+        actionValue = action[0]
+        x, x_dot, theta, theta_dot = state
+        
+        #force = env.force_mag if action==1 else -env.force_mag
+        force = (actionValue)*env.force_mag
+        
+        
+        costheta = math.cos(theta)
+        sintheta = math.sin(theta)
+        temp = (force + env.polemass_length * theta_dot * theta_dot * sintheta) / env.total_mass
+        thetaacc = (env.gravity * sintheta - costheta* temp) / (env.length * (4.0/3.0 - env.masspole * costheta * costheta / env.total_mass))
+        xacc  = temp - env.polemass_length * thetaacc * costheta / env.total_mass
+        if env.kinematics_integrator == 'euler':
+            x  = x + env.tau * x_dot
+            x_dot = x_dot + env.tau * xacc
+            theta = theta + env.tau * theta_dot
+            theta_dot = theta_dot + env.tau * thetaacc
+        else: # semi-implicit euler
+            x_dot = x_dot + env.tau * xacc
+            x  = x + env.tau * x_dot
+            theta_dot = theta_dot + env.tau * thetaacc
+            theta = theta + env.tau * theta_dot
+        state = np.array([x,x_dot,theta,theta_dot])
+        
+        if self.renderOn: cartpole_render(state)
+        
+        return state
 
 def cartpole_reward_function(state, action, next_state):
     reward = 1.0

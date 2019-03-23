@@ -10,14 +10,14 @@ class ApproximatePolicy():
     def __init__(self, actionSpace):
         self.actionSpace = actionSpace
         self.numActionSpace = len(self.actionSpace)
-    def __call__(self, state, model):
+    def __call__(self, stateBatch, model):
         graph = model.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         actionDistribution_ = graph.get_tensor_by_name('outputs/actionDistribution_:0')
-        actionDistribution = model.run(actionDistribution_, feed_dict = {state_ : state.reshape(1, -1)})
-        actionIndex = np.random.choice(range(self.numActionSpace), p = actionDistribution.ravel())  # select action w.r.t the actions prob
-        action = np.array(self.actionSpace[actionIndex])
-        return action
+        actionDistributions = model.run(actionDistribution_, feed_dict = {state_ : stateBatch})
+        actionIndexBatch = [np.random.choice(range(self.numActionSpace), p = actionDistribution) for actionDistribution in actionDistributions]
+        actionBatch = np.array([self.actionSpace[actionIndex] for actionIndex in actionIndexBatch])
+        return actionBatch
 
 class SampleTrajectory():
     def __init__(self, maxTimeStep, transitionFunction, isTerminal, reset):
@@ -26,12 +26,15 @@ class SampleTrajectory():
         self.isTerminal = isTerminal
         self.reset = reset
 
-    def __call__(self, policyFunction): 
+    def __call__(self, policy): 
         oldState = self.reset()
         trajectory = []
-
+        
         for time in range(self.maxTimeStep): 
-            action = policyFunction(oldState) 
+            oldStateBatch = oldState.reshape(1, -1)
+            actionBatch = policy(oldStateBatch) 
+            action = actionBatch[0]
+            # actionBatch shape: batch * action Dimension; only need action Dimention
             newState = self.transitionFunction(oldState, action)
             trajectory.append((oldState, action))
             
@@ -49,7 +52,7 @@ class AccumulateRewards():
     def __call__(self, trajectory):
         rewards = [self.rewardFunction(state, action) for state, action in trajectory]
         accumulateReward = lambda accumulatedReward, reward: self.decay * accumulatedReward + reward
-        accumulatedRewards = [ft.reduce(accumulateReward, reversed(rewards[TimeT: ])) for TimeT in range(len(rewards))]
+        accumulatedRewards = np.array([ft.reduce(accumulateReward, reversed(rewards[TimeT: ])) for TimeT in range(len(rewards))])
         return accumulatedRewards
 
 def normalize(accumulatedRewards):
@@ -64,30 +67,22 @@ class TrainTensorflow():
     def __call__(self, episode, normalizedAccumulatedRewardsEpisode, model):
         mergedEpisode = np.concatenate(episode)
         numBatch = len(mergedEpisode)
-        stateBatch, actionBatch = list(zip(*mergedEpisode))
-        actionIndexBatch = np.array([list(self.actionSpace).index(action) for action in actionBatch])
-        actionLabelBatch = np.zeros([numBatch, self.numActionSpace])
-        actionLabelBatch[np.arange(numBatch), actionIndexBatch] = 1
-        accumulatedRewardsBatch = np.concatenate(normalizedAccumulatedRewardsEpisode)
-        
-#        graph = model.graph
-#        state_ = graph.get_tensor_by_name('inputs/state_:0')
-#        actionLabel_ = graph.get_tensor_by_name('inputs/actionLabel_:0')
-#        negLogProb_ = graph.get_tensor_by_name('outputs/negLogProb_:0')
-#
-#        check = model.run(negLogProb_, feed_dict = {state_ : np.vstack(stateBatch),
-#                                                    actionLabel_ : np.vstack(actionLabelBatch),
-#                                                    })
-#        __import__('ipdb').set_trace()
+        stateEpisode, actionEpisode = list(zip(*mergedEpisode))
+        actionIndexEpisode = np.array([list(self.actionSpace).index(action) for action in actionEpisode])
+        actionLabelEpisode = np.zeros([numBatch, self.numActionSpace])
+        actionLabelEpisode[np.arange(numBatch), actionIndexEpisode] = 1
+        stateBatch, actionLabelBatch = np.vstack(stateEpisode), np.vstack(actionLabelEpisode)
+        mergedAccumulatedRewardsEpisode = np.concatenate(normalizedAccumulatedRewardsEpisode)
+
         graph = model.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         actionLabel_ = graph.get_tensor_by_name('inputs/actionLabel_:0')
         accumulatedRewards_ = graph.get_tensor_by_name('inputs/accumulatedRewards_:0')
         loss_ = graph.get_tensor_by_name('outputs/loss_:0')
         trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
-        loss, trainOpt = model.run([loss_, trainOpt_], feed_dict = {state_ : np.vstack(stateBatch),
-                                                                    actionLabel_ : np.vstack(actionLabelBatch),
-                                                                    accumulatedRewards_ : accumulatedRewardsBatch
+        loss, trainOpt = model.run([loss_, trainOpt_], feed_dict = {state_ : stateBatch,
+                                                                    actionLabel_ : actionLabelBatch,
+                                                                    accumulatedRewards_ : mergedAccumulatedRewardsEpisode
                                                                     })
         self.summaryWriter.flush()
         return loss, model
@@ -110,7 +105,7 @@ def main():
     numStateSpace = 4
     
     envModelName = 'inverted_pendulum'
-    renderOpen = False
+    renderOn = False
     maxTimeStep = 300
     maxQPos = 0.2
     qPosInitNoise = 0.001
@@ -153,7 +148,7 @@ def main():
 
     approximatePolicy = ApproximatePolicy(actionSpace)
 
-    transitionFunction = env.TransitionFunction(envModelName, renderOpen)
+    transitionFunction = env.TransitionFunction(envModelName, renderOn)
     isTerminal = env.IsTerminal(maxQPos)
     reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
     sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset)
@@ -170,7 +165,7 @@ def main():
     saveModel = dataSave.SaveModel(savePath)
     modelSave = saveModel(model)
 
-    transitionPlay = env.TransitionFunction(envModelName, renderOpen = True)
+    transitionPlay = env.TransitionFunction(envModelName, renderOn = True)
     samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
     policy = lambda state: approximatePolicy(state, model)
     playEpisode = [samplePlay(policy) for index in range(5)]
