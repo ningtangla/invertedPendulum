@@ -1,6 +1,5 @@
 import tensorflow as tf
 import numpy as np
-import gym
 import functools as ft
 import env
 import reward

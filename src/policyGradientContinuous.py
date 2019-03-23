@@ -1,18 +1,17 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
-import gym
 import functools as ft
 #import env
 import cartpole_env
 import reward
 import dataSave 
 
-def approximatePolicy(stateBatch, actorModel):
-    graph = actorModel.graph
+def approximatePolicy(stateBatch, model):
+    graph = model.graph
     state_ = graph.get_tensor_by_name('inputs/state_:0')
     actionSample_ = graph.get_tensor_by_name('outputs/actionSample_:0')
-    actionBatch = actorModel.run(actionSample_, feed_dict = {state_ : stateBatch})
+    actionBatch = model.run(actionSample_, feed_dict = {state_ : stateBatch})
     return actionBatch
 
 class SampleTrajectory():
@@ -65,14 +64,6 @@ class TrainTensorflow():
         mergedAccumulatedRewardsEpisode = np.concatenate(normalizedAccumulatedRewardsEpisode)
         
         graph = model.graph
-#        state_ = graph.get_tensor_by_name('inputs/state_:0')
-#        action_ = graph.get_tensor_by_name('inputs/action_:0')
-#        negLogProb_ = graph.get_tensor_by_name('outputs/Neg: 0')
-#
-#        check = model.run(negLogProb_, feed_dict = {state_ : np.vstack(stateBatch),
-#                                                    action_ : np.vstack(actionBatch),
-#                                                    })
-#        __import__('ipdb').set_trace()
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         action_ = graph.get_tensor_by_name('inputs/action_:0')
         accumulatedRewards_ = graph.get_tensor_by_name('inputs/accumulatedRewards_:0')
@@ -132,7 +123,6 @@ def main():
         accumulatedRewards_ = tf.placeholder(tf.float32, [None, ], name="accumulatedRewards_")
 
     with tf.name_scope("hidden"):
-    #    initWeights = tf.random_normal_initializer(0, 0.1)
         fullyConnected1_ = tf.layers.dense(inputs = state_, units = 30, activation = tf.nn.relu) 
         fullyConnected2_ = tf.layers.dense(inputs = fullyConnected1_, units = 20, activation = tf.nn.relu) 
         actionMean_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
