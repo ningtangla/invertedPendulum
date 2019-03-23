@@ -140,7 +140,7 @@ class BatchMontoCarloAdvantageActorCritic():
             advantagesEpisode = [estimateAdvantage(trajectory, critic) for trajectory in episode]
             policyLoss, actorModel = trainActor(episode, advantagesEpisode, actorModel)
             print(np.mean([len(episode[index]) for index in range(self.numTrajectory)]))
-        return actorModel, critiModel
+        return actorModel, criticModel
 
 def main():
     numActionSpace = 1
@@ -160,7 +160,7 @@ def main():
     rewardDecay = 0.99
 
     numTrajectory = 200 
-    maxEpisode = 50
+    maxEpisode = 1
 
     learningRateActor = 0.001
     learningRateCritic = 0.01
@@ -194,6 +194,7 @@ def main():
         actorInit = tf.global_variables_initializer()
         
         actorSummary = tf.summary.merge_all()
+        actorSaver = tf.train.Saver(tf.global_variables())
 
     actorWriter = tf.summary.FileWriter('tensorBoard/actor', graph = actorGraph)
     actorModel = tf.Session(graph = actorGraph)
@@ -220,6 +221,7 @@ def main():
         criticInit = tf.global_variables_initializer()
         
         criticSummary = tf.summary.merge_all()
+        criticSaver = tf.train.Saver(tf.global_variables())
     
     criticWriter = tf.summary.FileWriter('tensorBorad/critic', graph = criticGraph)
     criticModel = tf.Session(graph = criticGraph)
@@ -248,14 +250,14 @@ def main():
     trainedActorModel, trainedCriticModel = batchMontoCarloAdvantageActorCritic(actorModel, criticModel, approximatePolicy, sampleTrajectory, accumulateRewards, trainCritic,
             approximateValue, estimateAdvantage, trainActor)
 
-    actorSaver = tf.train.Saver()
-    actorSaver(trainedActorModel, savePathActor)
-    criticSaver = tf.train.Saver()
-    criticSaver(trainedCriticModel, savePathCritic)
+    with actorModel.as_default():
+        actorSaver.save(trainedActorModel, savePathActor)
+    with criticModel.as_default():
+        criticSaver.save(trainedCriticModel, savePathCritic)
 
     transitionPlay = cartpole_env.Cartpole_continuous_action_transition_function(renderOn = True)
     samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
-    actor = lambda state: approximatePolicy(state, model)
+    actor = lambda state: approximatePolicy(state, trainedActorModel)
     playEpisode = [samplePlay(actor) for index in range(5)]
     print(np.mean([len(playEpisode[index]) for index in range(5)]))
 
