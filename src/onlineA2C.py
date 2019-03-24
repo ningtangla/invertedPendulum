@@ -14,68 +14,28 @@ def approximatePolicy(stateBatch, actorModel):
     actionBatch = actorModel.run(actionSample_, feed_dict = {state_ : stateBatch})
     return actionBatch
 
-class SampleTrajectory():
-    def __init__(self, maxTimeStep, transitionFunction, isTerminal, reset):
-        self.maxTimeStep = maxTimeStep
-        self.transitionFunction = transitionFunction
-        self.isTerminal = isTerminal
-        self.reset = reset
-
-    def __call__(self, actor): 
-        oldState = self.reset()
-        trajectory = []
-        
-        for time in range(self.maxTimeStep): 
-            oldStateBatch = oldState.reshape(1, -1)
-            actionBatch = actor(oldStateBatch) 
-            action = actionBatch[0]
-            # actionBatch shape: batch * action Dimension; only keep action Dimention in shape
-            newState = self.transitionFunction(oldState, action)
-            trajectory.append((oldState, action))
-            
-            terminal = self.isTerminal(newState)
-            if terminal:
-                break
-            oldState = newState
-            
-        return trajectory
-
-class AccumulateRewards():
-    def __init__(self, decay, rewardFunction):
+class TrainCriticBootstrapTensorflow():
+    def __init__(self, criticWriter, decay, rewardFunction):
+        self.criticWriter = criticWriter
         self.decay = decay
         self.rewardFunction = rewardFunction
-    def __call__(self, trajectory):
-        rewards = [self.rewardFunction(state, action) for state, action in trajectory]
-        accumulateReward = lambda accumulatedReward, reward: self.decay * accumulatedReward + reward
-        accumulatedRewards = np.array([ft.reduce(accumulateReward, reversed(rewards[TimeT: ])) for TimeT in range(len(rewards))])
-        return accumulatedRewards
-
-def normalize(accumulatedRewards):
-    normalizedAccumulatedRewards = (accumulatedRewards - np.mean(accumulatedRewards)) / np.std(accumulatedRewards)
-    return normalizedAccumulatedRewards
-
-class TrainCriticTensorflow():
-    def __init__(self, criticWriter):
-        self.criticWriter = criticWriter
-    def __call__(self, episode, accumulatedRewardsEpisode, criticModel):
-        mergedEpisode = np.concatenate(episode)
-        stateEpisode, actionEpisode = list(zip(*mergedEpisode))
-        stateBatch, actionBatch = np.vstack(stateEpisode), np.vstack(actionEpisode)
-        mergedAccumulatedRewardsEpisode = np.concatenate(accumulatedRewardsEpisode)
-        accumulatedRewardsBatch = np.vstack(mergedAccumulatedRewardsEpisode)
+    def __call__(self, states, nextStates, rewards, criticModel):
+        
+        stateBatch, nextStateBatch, rewardBatch = np.vstack(states), np.vstack(nextStates), np.vstack(rewards)
 
         graph = criticModel.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
+        value_ = graph.get_tensor_by_name('outputs/value_/BiasAdd:0')
+        nextStateValueBatch = criticModel.run(value_, feed_dict = {state_ : nextStateBatch})
+        
+        valueTargetBatch = rewardBatch + self.decay * nextStateValueBatch
+
+        state_ = graph.get_tensor_by_name('inputs/state_:0')
         valueTarget_ = graph.get_tensor_by_name('inputs/valueTarget_:0')
-        check_ = graph.get_tensor_by_name('outputs/diff_:0')
-        check = criticModel.run(check_, feed_dict = {state_ : np.vstack(stateBatch),
-                                                     valueTarget_ : np.vstack(accumulatedRewardsBatch)
-                                                     })
-        #__import__('ipdb').set_trace()
         loss_ = graph.get_tensor_by_name('outputs/loss_:0')
         trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
         loss, trainOpt = criticModel.run([loss_, trainOpt_], feed_dict = {state_ : stateBatch,
-                                                                          valueTarget_ : accumulatedRewardsBatch
+                                                                          valueTarget_ : valueTargetBatch
                                                                           })
         self.criticWriter.flush()
         return loss, criticModel
@@ -87,32 +47,25 @@ def approximateValue(stateBatch, criticModel):
     valueBatch = criticModel.run(value_, feed_dict = {state_ : stateBatch})
     return valueBatch
 
-class EstimateAdvantage():
+class EstimateAdvantageBootstrap():
     def __init__(self, decay, rewardFunction):
         self.decay = decay
         self.rewardFunction = rewardFunction
-    def __call__(self, trajectory, critic):
-        rewards = np.array([self.rewardFunction(state, action) for state, action in trajectory[ : -1]])
+    def __call__(self, states, nextStates, rewards, critic):
         
-        statesOrigin, actionsOrigin = list(zip(*trajectory))
-        nextStates = statesOrigin[1 : ]
-        states, actions = statesOrigin[ : -1], actionsOrigin[ : -1]
-        stateBatch, nextStateBatch = np.vstack(states), np.vstack(nextStates)
-        valueDifferencesBatch = self.decay * critic(nextStateBatch) - critic(stateBatch)
-        mergedValueDifferences = np.concatenate(valueDifferencesBatch)
-        advantages = rewards + mergedValueDifferences
-        return advantages
+        stateBatch, nextStateBatch, rewardBatch = state.reshape(1, -1), nextState.reshape(1, -1), reward.reshape(1, -1)
+         
+        advantageBatch = rewardBatch + self.decay * critic(nextStateBatch) - critic(stateBatch)
+        advantage = np.concatenate(advantageBatch)
+        return advantage
 
-class TrainActorTensorflow():
+class TrainActorBootstrapTensorflow():
     def __init__(self, actorWriter):
         self.actorWriter = actorWriter
-    def __call__(self, episode, advantagesEpisode, actorModel):
-        noLastStateEpisode = [trajectory[ : -1] for trajectory in episode]
-        mergedEpisode = np.concatenate(noLastStateEpisode)
-        stateEpisode, actionEpisode = list(zip(*mergedEpisode))
-        stateBatch, actionBatch = np.vstack(stateEpisode), np.vstack(actionEpisode)
-        mergedAdvantagesEpisode = np.concatenate(advantagesEpisode)
-
+    def __call__(self, state, action, nextState, advantage, critic):
+        
+        stateBatch, nextStateBatch, rewardBatch = state.reshape(1, -1), nextState.reshape(1, -1), reward.reshape(1, -1)
+        
         graph = actorModel.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         action_ = graph.get_tensor_by_name('inputs/action_:0')
@@ -121,28 +74,30 @@ class TrainActorTensorflow():
         trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
         loss, trainOpt = actorModel.run([loss_, trainOpt_], feed_dict = {state_ : stateBatch,
                                                                          action_ : actionBatch,
-                                                                         advantages_ : mergedAdvantagesEpisode
+                                                                         advantages_ : advantages       
                                                                          })
         self.actorWriter.flush()
         return loss, actorModel
 
-class BatchMontoCarloAdvantageActorCritic():
+class offlineAdvantageActorCritic():
     def __init__(self, numTrajectory, maxEpisode):
         self.numTrajectory = numTrajectory
         self.maxEpisode = maxEpisode
-    def __call__(self, actorModel, criticModel, approximatePolicy, sampleTrajectory, accumulateRewards, trainCritic, approximateValue, estimateAdvantage, trainActor):
+    def __call__(self, actorModel, criticModel, approximatePolicy, sampleTrajectory, trainCritic, approximateValue, estimateAdvantage, trainActor):
         for episodeIndex in range(self.maxEpisode):
             actor = lambda state: approximatePolicy(state, actorModel)
             episode = [sampleTrajectory(actor) for index in range(self.numTrajectory)]
-            accumulatedRewardsEpisode = [normalize(accumulateRewards(trajectory)) for trajectory in episode]
-            valueLoss, criticModel = trainCritic(episode, accumulatedRewardsEpisode, criticModel)
+            valueLoss, criticModel = trainCritic(episode, criticModel)
             critic = lambda state: approximateValue(state, criticModel)
-            advantagesEpisode = [estimateAdvantage(trajectory, critic) for trajectory in episode]
-            policyLoss, actorModel = trainActor(episode, advantagesEpisode, actorModel)
+            advantages = estimateAdvantage(episode, critic)
+            policyLoss, actorModel = trainActor(episode, advantages, actorModel)
             print(np.mean([len(episode[index]) for index in range(self.numTrajectory)]))
         return actorModel, criticModel
 
 def main():
+    #tf.set_random_seed(123)
+    #np.random.seed(123)
+
     numActionSpace = 1
     numStateSpace = 4
     actionLow = -2
@@ -160,7 +115,7 @@ def main():
     rewardDecay = 0.99
 
     numTrajectory = 200 
-    maxEpisode = 1
+    maxEpisode = 1000
 
     learningRateActor = 0.001
     learningRateCritic = 0.01
@@ -207,7 +162,7 @@ def main():
             valueTarget_ = tf.placeholder(tf.float32, [None, 1], name="valueTarget_")
 
         with tf.name_scope("hidden1"):
-            fullyConnected1_ = tf.layers.dense(inputs = state_, units = 20, activation = tf.nn.relu6)
+            fullyConnected1_ = tf.layers.dense(inputs = state_, units = 30, activation = tf.nn.relu)
 
         with tf.name_scope("outputs"):        
             value_ = tf.layers.dense(inputs = fullyConnected1_, units = 1, activation = None, name = 'value_')
@@ -226,28 +181,31 @@ def main():
     criticWriter = tf.summary.FileWriter('tensorBorad/critic', graph = criticGraph)
     criticModel = tf.Session(graph = criticGraph)
     criticModel.run(criticInit)    
-    
-    """
-    transitionFunction = env.TransitionFunction(envModelName, renderOn)
-    isTerminal = env.IsTerminal(maxQPos)
-    reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
-    """
+     
+    #transitionFunction = env.TransitionFunction(envModelName, renderOn)
+    #isTerminal = env.IsTerminal(maxQPos)
+    #reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
     transitionFunction = cartpole_env.Cartpole_continuous_action_transition_function(renderOn = False)
     isTerminal = cartpole_env.cartpole_done_function
     reset = cartpole_env.cartpole_get_initial_state
+    
     sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset)
-
-    rewardFunction = reward.RewardFunction(aliveBouns) 
+    
+    rewardFunction = reward.RewardFunction(aliveBouns)
+    #rewardFunction = reward.CartpoleRewardFunction(aliveBouns) 
     accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
-    trainCritic = TrainCriticTensorflow(criticWriter)
+    trainCritic = TrainCriticMonteCarloTensorflow(criticWriter, accumulateRewards)
+    estimateAdvantage = EstimateAdvantageMonteCarlo(accumulateRewards)
+    trainActor = TrainActorMonteCarloTensorflow(actorWriter) 
     
-    estimateAdvantage = EstimateAdvantage(rewardDecay, rewardFunction)
-    trainActor = TrainActorTensorflow(actorWriter) 
+    #trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, rewardFunction)
+    #estimateAdvantage = EstimateAdvantageBootstrap(rewardDecay, rewardFunction)
+    #trainActor = TrainActorBootstrapTensorflow(actorWriter) 
 
-    batchMontoCarloAdvantageActorCritic = BatchMontoCarloAdvantageActorCritic(numTrajectory, maxEpisode)
+    actorCritic = offlineAdvantageActorCritic(numTrajectory, maxEpisode)
 
-    trainedActorModel, trainedCriticModel = batchMontoCarloAdvantageActorCritic(actorModel, criticModel, approximatePolicy, sampleTrajectory, accumulateRewards, trainCritic,
+    trainedActorModel, trainedCriticModel = actorCritic(actorModel, criticModel, approximatePolicy, sampleTrajectory, trainCritic,
             approximateValue, estimateAdvantage, trainActor)
 
     with actorModel.as_default():
@@ -263,3 +221,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
