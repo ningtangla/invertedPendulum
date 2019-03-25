@@ -14,13 +14,38 @@ def approximatePolicy(stateBatch, actorModel):
     actionBatch = actorModel.run(actionSample_, feed_dict = {state_ : stateBatch})
     return actionBatch
 
+class SampleOneStep():
+    def __init__(self, transitionFunction, rewardFunction):
+        self.transitionFunction = transitionFunction
+        self.rewardFunction = rewardFunction
+
+    def __call__(self, oldstate, actor): 
+        sample = [] 
+        oldStateBatch = oldState.reshape(1, -1)
+        actionBatch = actor(oldStateBatch) 
+        action = actionBatch[0]
+        # actionBatch shape: batch * action Dimension; only keep action Dimention in shape
+        newState = self.transitionFunction(oldState, action)
+        reward = self.rewardFunction(oldState, action)
+        sample.append((oldState, action, newState, reward))
+            
+        return sample
+
+def approximateValue(stateBatch, criticModel):
+    graph = criticModel.graph
+    state_ = graph.get_tensor_by_name('inputs/state_:0')
+    value_ = graph.get_tensor_by_name('outputs/value_/BiasAdd:0')
+    valueBatch = criticModel.run(value_, feed_dict = {state_ : stateBatch})
+    return valueBatch
+
 class TrainCriticBootstrapTensorflow():
     def __init__(self, criticWriter, decay, rewardFunction):
         self.criticWriter = criticWriter
         self.decay = decay
         self.rewardFunction = rewardFunction
-    def __call__(self, states, nextStates, rewards, criticModel):
+    def __call__(self, samples, criticModel):
         
+        states, actions, nextStates, rewards = list(zip(*samples))
         stateBatch, nextStateBatch, rewardBatch = np.vstack(states), np.vstack(nextStates), np.vstack(rewards)
 
         graph = criticModel.graph
@@ -40,31 +65,39 @@ class TrainCriticBootstrapTensorflow():
         self.criticWriter.flush()
         return loss, criticModel
 
-def approximateValue(stateBatch, criticModel):
-    graph = criticModel.graph
-    state_ = graph.get_tensor_by_name('inputs/state_:0')
-    value_ = graph.get_tensor_by_name('outputs/value_/BiasAdd:0')
-    valueBatch = criticModel.run(value_, feed_dict = {state_ : stateBatch})
-    return valueBatch
-
 class EstimateAdvantageBootstrap():
     def __init__(self, decay, rewardFunction):
         self.decay = decay
         self.rewardFunction = rewardFunction
-    def __call__(self, states, nextStates, rewards, critic):
+    def __call__(self, samples, critic):
         
-        stateBatch, nextStateBatch, rewardBatch = state.reshape(1, -1), nextState.reshape(1, -1), reward.reshape(1, -1)
+        states, actions, nextStates, rewards = list(zip(*samples))
+        stateBatch, actionBatch, nextStateBatch, rewardBatch = np.vstack(states), np.vstack(actions), np.vstack(nextStates), np.vstack(rewards)
          
         advantageBatch = rewardBatch + self.decay * critic(nextStateBatch) - critic(stateBatch)
-        advantage = np.concatenate(advantageBatch)
-        return advantage
+        advantages = np.concatenate(advantageBatch)
+        return advantages
 
-class TrainActorBootstrapTensorflow():
+class EstimateAdvantageMonteCarlo():
+    def __init__(self, decay, accumulateRewards):
+        self.decay = decay
+        self.accumulateRewards = accumulateRewards
+    def __call__(self, samples, critic):
+        
+        states, actions, nextStates, rewards = list(zip(*samples))
+        stateBatch, actionBatch, nextStateBatch, rewardBatch = np.vstack(states), np.vstack(actions), np.vstack(nextStates), np.vstack(rewards)
+         
+        advantageBatch = rewardBatch + self.decay * critic(nextStateBatch) - critic(stateBatch)
+        advantages = np.concatenate(advantageBatch)
+        return advantages
+
+class TrainActorTensorflow():
     def __init__(self, actorWriter):
         self.actorWriter = actorWriter
-    def __call__(self, state, action, nextState, advantage, critic):
+    def __call__(self, samples, advantages, critic):
         
-        stateBatch, nextStateBatch, rewardBatch = state.reshape(1, -1), nextState.reshape(1, -1), reward.reshape(1, -1)
+        states, actions, nextStates, rewards = list(zip(*samples))
+        stateBatch, actionBatch, nextStateBatch, rewardBatch = np.vstack(states), np.vstack(actions), np.vstack(nextStates), np.vstack(rewards)
         
         graph = actorModel.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
