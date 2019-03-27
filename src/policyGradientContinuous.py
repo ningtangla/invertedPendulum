@@ -57,7 +57,7 @@ def normalize(accumulatedRewards):
 class TrainTensorflow():
     def __init__(self, summaryWriter):
         self.summaryWriter = summaryWriter
-    def __call__(self, episode, normalizedAccumulatedRewardsEpisode, model):
+    def __call__(self, episode, episodeIndex, normalizedAccumulatedRewardsEpisode, model):
         mergedEpisode = np.concatenate(episode)
         stateEpisode, actionEpisode = list(zip(*mergedEpisode))
         stateBatch, actionBatch = np.vstack(stateEpisode), np.vstack(actionEpisode)
@@ -69,10 +69,12 @@ class TrainTensorflow():
         accumulatedRewards_ = graph.get_tensor_by_name('inputs/accumulatedRewards_:0')
         loss_ = graph.get_tensor_by_name('outputs/loss_:0')
         trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
-        loss, trainOpt = model.run([loss_, trainOpt_], feed_dict = {state_ : np.vstack(stateBatch),
+        lossSummary = graph.get_tensor_by_name('outputs/Loss:0')
+        loss, summary, trainOpt = model.run([loss_, lossSummary, trainOpt_], feed_dict = {state_ : np.vstack(stateBatch),
                                                                     action_ : np.vstack(actionBatch),
                                                                     accumulatedRewards_ : mergedAccumulatedRewardsEpisode
                                                                     })
+        self.summaryWriter.add_summary(summary, episodeIndex)
         self.summaryWriter.flush()
         return loss, model
 
@@ -85,7 +87,7 @@ class PolicyGradient():
             policy = lambda state: approximatePolicy(state, model)
             episode = [sampleTrajectory(policy) for index in range(self.numTrajectory)]
             normalizedAccumulatedRewardsEpisode = [normalize(accumulateRewards(trajectory)) for trajectory in episode]
-            loss, model = train(episode, normalizedAccumulatedRewardsEpisode, model)
+            loss, model = train(episode, episodeIndex, normalizedAccumulatedRewardsEpisode, model)
             print(np.mean([len(episode[index]) for index in range(self.numTrajectory)]))
         return model
 
@@ -165,7 +167,7 @@ def main():
     saveModel = dataSave.SaveModel(savePath)
     modelSave = saveModel(model)
 
-    transitionPlay = cartpole_env.Cartpole_continuous_action_transition_function(renderOn = True)
+    transitionPlay = cartpole_env.Cartpole_continuous_action_transition_function(renderOn = False)
     samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
     policy = lambda state: approximatePolicy(state, model)
     playEpisode = [samplePlay(policy) for index in range(5)]
