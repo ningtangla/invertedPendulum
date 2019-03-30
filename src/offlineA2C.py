@@ -200,7 +200,7 @@ class TrainActorBootstrapTensorflow():
         self.actorWriter.flush()
         return loss, actorModel
 
-class offlineAdvantageActorCritic():
+class OfflineAdvantageActorCritic():
     def __init__(self, numTrajectory, maxEpisode):
         self.numTrajectory = numTrajectory
         self.maxEpisode = maxEpisode
@@ -282,7 +282,7 @@ def main():
             state_ = tf.placeholder(tf.float32, [None, numStateSpace], name="state_")
             valueTarget_ = tf.placeholder(tf.float32, [None, 1], name="valueTarget_")
 
-        with tf.name_scope("hidden1"):
+        with tf.name_scope("hidden"):
             fullyConnected1_ = tf.layers.dense(inputs = state_, units = 30, activation = tf.nn.relu)
 
         with tf.name_scope("outputs"):        
@@ -299,7 +299,7 @@ def main():
         criticSummary = tf.summary.merge_all()
         criticSaver = tf.train.Saver(tf.global_variables())
     
-    criticWriter = tf.summary.FileWriter('tensorBorad/critic', graph = criticGraph)
+    criticWriter = tf.summary.FileWriter('tensorBoard/critic', graph = criticGraph)
     criticModel = tf.Session(graph = criticGraph)
     criticModel.run(criticInit)    
      
@@ -324,7 +324,7 @@ def main():
     #estimateAdvantage = EstimateAdvantageBootstrap(rewardDecay, rewardFunction)
     #trainActor = TrainActorBootstrapTensorflow(actorWriter) 
 
-    actorCritic = offlineAdvantageActorCritic(numTrajectory, maxEpisode)
+    actorCritic = OfflineAdvantageActorCritic(numTrajectory, maxEpisode)
 
     trainedActorModel, trainedCriticModel = actorCritic(actorModel, criticModel, approximatePolicy, sampleTrajectory, trainCritic,
             approximateValue, estimateAdvantage, trainActor)

@@ -2,6 +2,7 @@ import mujoco_py as mujoco
 import os
 import numpy as np
 
+#np.random.seed(123)
 class Reset():
     def __init__(self, modelName, qPosInitNoise, qVelInitNoise): 
         model = mujoco.load_model_from_path('xmls/' + modelName + '.xml')

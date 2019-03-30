@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 import functools as ft
 import env
@@ -13,8 +14,8 @@ class ApproximatePolicy():
         graph = model.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         actionDistribution_ = graph.get_tensor_by_name('outputs/actionDistribution_:0')
-        actionDistributions = model.run(actionDistribution_, feed_dict = {state_ : stateBatch})
-        actionIndexBatch = [np.random.choice(range(self.numActionSpace), p = actionDistribution) for actionDistribution in actionDistributions]
+        actionDistributionBatch = model.run(actionDistribution_, feed_dict = {state_ : stateBatch})
+        actionIndexBatch = [np.random.choice(range(self.numActionSpace), p = actionDistribution) for actionDistribution in actionDistributionBatch]
         actionBatch = np.array([self.actionSpace[actionIndex] for actionIndex in actionIndexBatch])
         return actionBatch
 
@@ -129,11 +130,11 @@ def main():
     with tf.name_scope("hidden"):
         fullyConnected1_ = tf.layers.dense(inputs = state_, units = 100, activation = tf.nn.relu)
         fullyConnected2_ = tf.layers.dense(inputs = fullyConnected1_, units = numActionSpace, activation = tf.nn.relu)
-        fullyConnected3_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = None)
+        allActionActivation_ = tf.layers.dense(inputs = fullyConnected2_, units = numActionSpace, activation = None)
 
     with tf.name_scope("outputs"):
-        actionDistribution_ = tf.nn.softmax(fullyConnected3_, name = 'actionDistribution_')
-        negLogProb_ = tf.nn.softmax_cross_entropy_with_logits_v2(logits = fullyConnected3_, labels = actionLabel_, name = 'negLogProb_')
+        actionDistribution_ = tf.nn.softmax(allActionActivation_, name = 'actionDistribution_')
+        negLogProb_ = tf.nn.softmax_cross_entropy_with_logits_v2(logits = allActionActivation_, labels = actionLabel_, name = 'negLogProb_')
         loss_ = tf.reduce_sum(tf.multiply(negLogProb_, accumulatedRewards_), name = 'loss_')
     tf.summary.scalar("Loss", loss_)
 
