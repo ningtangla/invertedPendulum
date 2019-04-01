@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import functools as ft
+import compuationGraph as cg
 import env
 import cartpole_env
 import reward
@@ -42,12 +43,26 @@ def gradientPartialActionFromQEvaluation(stateBatch, actionBatch, criticModel):
                                                                                      })
     return gradientQPartialAction
 
+
+class AddActionNoise():
+    def __init__(self, actionNoise, noiseDecay, actionLow, actionHigh):
+        self.actionNoise = actionNoise
+        self.noiseDecay = noiseDecay
+        self.actionLow, self.actionHigh = actionLow, actionHigh
+        
+    def __call__(self, actionPerfect, episodeIndex):
+        noisyAction = np.random.normal(actionPerfect, self.actionNoise * (self.noiseDecay ** episodeIndex))
+        action = np.clip(noisyAction, self.actionLow, self.actionHigh)
+        return action
+
 class SampleTrajectory():
-    def __init__(self, maxTimeStep, transitionFunction, isTerminal, reset):
+    def __init__(self, maxTimeStep, transitionFunction, isTerminal, reset, addActionNoise):
         self.maxTimeStep = maxTimeStep
         self.transitionFunction = transitionFunction
         self.isTerminal = isTerminal
         self.reset = reset
+        self.addActionNoise = addActionNoise
+
     def __call__(self, evaActor, episodeIndex): 
         oldState = self.reset()
         trajectory = []
@@ -55,15 +70,15 @@ class SampleTrajectory():
         for time in range(self.maxTimeStep): 
             oldStateBatch = oldState.reshape(1, -1)
             actionBatch = evaActor(oldStateBatch) 
-            actionNoNoise = actionBatch[0]
-            action = np.clip(np.random.normal(actionNoNoise, 0.01*(0.9995 ** episodeIndex)), -3, 3)
+            actionPerfect = actionBatch[0]
+            action = self.addActionNoise(actionPerfect, episodeIndex)
             #action = actionNoNoise
             # actionBatch shape: batch * action Dimension; only keep action Dimention in shape
             newState = self.transitionFunction(oldState, action) 
-            terminal = self.isTerminal(newState)
+            trajectory.append([oldState, action, newState])
+            terminal = self.isTerminal(oldState)
             if terminal:
                 break
-            trajectory.append((oldState, action, newState))
             oldState = newState
             
         return trajectory
@@ -132,7 +147,7 @@ class TrainCriticBootstrapTensorflow():
         criticModel.run(updateTargetParameter_)
         
         self.criticWriter.flush()
-        return loss, criticModel
+        return criticModel
 
 class TrainActorTensorflow():
     def __init__(self, actorWriter):
@@ -150,7 +165,7 @@ class TrainActorTensorflow():
         gradientQPartialAction_ = actorGraph.get_tensor_by_name('inputs/gradientQPartialAction_:0')
         gradientQPartialActorParameter_ = actorGraph.get_tensor_by_name('outputs/gradientQPartialActorParameter_/evaluationHidden/dense/MatMul_grad/MatMul:0')
         trainOpt_ = actorGraph.get_operation_by_name('train/adamOpt_')
-        gradientQPartialActorParameter_, trainOpt = actorModel.run([gradientQPartialActorParameter_, trainOpt_], feed_dict = {state_ : stateBatch,
+        gradientQPartialActorParameter, trainOpt = actorModel.run([gradientQPartialActorParameter_, trainOpt_], feed_dict = {state_ : stateBatch,
                                                                                                                               gradientQPartialAction_ : gradientQPartialAction[0]  
                                                                                                                               })
         numParams_ = actorGraph.get_tensor_by_name('outputs/numParams_:0')
@@ -158,27 +173,27 @@ class TrainActorTensorflow():
         updateTargetParameter_ = [actorGraph.get_tensor_by_name('outputs/assign'+str(paramIndex_)+':0') for paramIndex_ in range(numParams)]
         actorModel.run(updateTargetParameter_)
         self.actorWriter.flush()
-        return gradientQPartialActorParameter_, actorModel
+        return actorModel
 
 class DeepDeterministicPolicyGradient():
     def __init__(self, numTrajectory, maxEpisode):
         self.numTrajectory = numTrajectory
         self.maxEpisode = maxEpisode
-    def __call__(self, actorModel, criticModel, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget, gradientPartialActionFromQEvaluation, sampleTrajectory,
+    def __call__(self, actorModels, criticModels, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget, gradientPartialActionFromQEvaluation, sampleTrajectory,
             memory, sampleMiniBatch, trainCritic, trainActor):
         replayBuffer = []
         for episodeIndex in range(self.maxEpisode):
-            evaActor = lambda state: approximatePolicyEvaluation(state, actorModel)
-            episode = [sampleTrajectory(evaActor, episodeIndex) for index in range(self.numTrajectory)]
+            evaActors = [lambda state: approximatePolicyEvaluation(state, actorModel) for actorModel in actorModels]
+            episode = [sampleTrajectory(evaActors, episodeIndex) for index in range(self.numTrajectory)]
             replayBuffer = memory(replayBuffer, episode)
             miniBatch = sampleMiniBatch(replayBuffer) 
-            tarActor = lambda state: approximatePolicyEvaluation(state, actorModel)
-            tarCritic = lambda state, action: approximateQTarget(state, action, criticModel)
-            QLoss, criticModel = trainCritic(miniBatch, tarActor, tarCritic, criticModel)
-            gradientEvaCritic = lambda state, action: gradientPartialActionFromQEvaluation(state, action, criticModel)
-            gradientQPartialActorParameter, actorModel = trainActor(miniBatch, evaActor, gradientEvaCritic, actorModel)
+            tarActors = [lambda state: approximatePolicyEvaluation(state, actorModel) for actorModel in actorModels]
+            tarCritics = [lambda state, action: approximateQTarget(state, action, criticModel) for criticModel in criticModels]
+            criticModels = [trainCritic(miniBatch, tarActor, tarCritic, criticModel) for tarActor, tarCriti, criticModel in zip(tarActors, tarCritics, criticModels)]
+            gradientEvaCritics = [lambda state, action: gradientPartialActionFromQEvaluation(state, action, criticModel) for criticModel in criticModels]
+            actorModels = trainActor(miniBatch, evaActor, gradientEvaCritic, actorModel) for evaActor, gradientEvaCritic, actorModel in zip(evaActors, gradientEvaCritics, actorModels]
             print(np.mean([len(episode[index]) for index in range(self.numTrajectory)]))
-        return actorModel, criticModel
+        return actorModels, criticModels
 
 def main():
     #tf.set_random_seed(123)
@@ -214,93 +229,11 @@ def main():
     
     softReplaceRatio = 0.01
 
-    actorGraph = tf.Graph()
-    with actorGraph.as_default():
-        with tf.variable_scope("inputs"):
-            state_ = tf.layers.batch_normalization(tf.placeholder(tf.float32, [None, numStateSpace], name="state_"))
-            gradientQPartialAction_ = tf.placeholder(tf.float32, [None, numActionSpace], name="gradientQPartialAction_")
+    numAgent = 1
 
-        with tf.variable_scope("evaluationHidden"):
-            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 20, activation = tf.nn.relu))
-            evaFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = evaFullyConnected1_, units = 20, activation = tf.nn.relu))
-            evaActionActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
-            
-        with tf.variable_scope("targetHidden"):
-            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 20, activation = tf.nn.relu))
-            tarFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = tarFullyConnected1_, units = 20, activation = tf.nn.relu))
-            tarActionActivation_ = tf.layers.dense(inputs = tarFullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
-        
-        with tf.variable_scope("outputs"):        
-            evaParams_ = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='evaluationHidden')
-            tarParams_ = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='targetHidden')
-            numParams_ = tf.constant(len(evaParams_), name = 'numParams_')
-            updateTargetParameter_ = [tf.assign(tarParam_, (1 - softReplaceRatio) * tarParam_ + softReplaceRatio * evaParam_, name = 'assign'+str(paramIndex_)) for paramIndex_,
-                tarParam_, evaParam_ in zip(range(len(evaParams_)), tarParams_, evaParams_)]
-            evaAction_ = tf.multiply(evaActionActivation_, actionRatio, name = 'evaAction_')
-            tarAction_ = tf.multiply(tarActionActivation_, actionRatio, name = 'tarAction_')
-            gradientQPartialActorParameter_ = tf.gradients(ys = evaAction_, xs = evaParams_, grad_ys = gradientQPartialAction_, name = 'gradientQPartialActorParameter_')
-
-        with tf.variable_scope("train"):
-            #-learningRate for ascent
-            trainOpt_ = tf.train.AdamOptimizer(-learningRateActor, name = 'adamOpt_').apply_gradients(zip(gradientQPartialActorParameter_, evaParams_))
-        actorInit = tf.global_variables_initializer()
-        
-        actorSummary = tf.summary.merge_all()
-        actorSaver = tf.train.Saver(tf.global_variables())
-
-    actorWriter = tf.summary.FileWriter('tensorBoard/actorDDPG', graph = actorGraph)
-    actorModel = tf.Session(graph = actorGraph)
-    actorModel.run(actorInit)    
+    actorModels = [cg.createDDPGActorGraph(numStateSpace, numActionSpace, softReplaceRatio, agentIndex) for agentIndex in range(numAgent)]
+    criticModels = [cg.createDDPGCriticGraph(numStateSpace, numActionSpace, softReplaceRatio, agentIndex) for agentIndex in range(numAgent)]
     
-    criticGraph = tf.Graph()
-    with criticGraph.as_default():
-        with tf.variable_scope("inputs"):
-            state_ = tf.layers.batch_normalization(tf.placeholder(tf.float32, [None, numStateSpace], name="state_"))
-            action_ = tf.stop_gradient(tf.placeholder(tf.float32, [None, numActionSpace]), name='action_')
-            QTarget_ = tf.placeholder(tf.float32, [None, 1], name="QTarget_")
-
-        with tf.variable_scope("evaluationHidden"):
-            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 300, activation = tf.nn.relu))
-            numFullyConnected2Units = 100
-            evaStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='evaStateFC1ToFullyConnected2Weights', shape = [300, numFullyConnected2Units])
-            evaActionToFullyConnected2Weights_ = tf.get_variable(name='evaActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
-            evaFullyConnected2Bias_ = tf.get_variable(name = 'evaFullyConnected2Bias', shape = [numFullyConnected2Units])
-            evaFullyConnected2_ = tf.nn.relu(tf.matmul(evaFullyConnected1_, evaStateFC1ToFullyConnected2Weights_) + tf.matmul(action_, evaActionToFullyConnected2Weights_) + evaFullyConnected2Bias_ )
-            evaQActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = 1, activation = None)
-
-        with tf.variable_scope("targetHidden"):
-            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 300, activation = tf.nn.relu))
-            numFullyConnected2Units = 100
-            tarStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='tarStateFC1ToFullyConnected2Weights', shape = [300, numFullyConnected2Units])
-            tarActionToFullyConnected2Weights_ = tf.get_variable(name='tarActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
-            tarFullyConnected2Bias_ = tf.get_variable(name = 'tarFullyConnected2Bias', shape = [numFullyConnected2Units])
-            tarFullyConnected2_ = tf.nn.relu(tf.matmul(tarFullyConnected1_, tarStateFC1ToFullyConnected2Weights_) + tf.matmul(action_, tarActionToFullyConnected2Weights_) + tarFullyConnected2Bias_ )
-            tarQActivation_ = tf.layers.dense(inputs = tarFullyConnected2_, units = 1, activation = None)
-        
-        with tf.variable_scope("outputs"):        
-            evaParams_ = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='evaluationHidden')
-            tarParams_ = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='targetHidden')
-            numParams_ = tf.constant(len(evaParams_), name = 'numParams_')
-            updateTargetParameter_ = [tf.assign(tarParam_, (1 - softReplaceRatio) * tarParam_ + softReplaceRatio * evaParam_, name = 'assign'+str(paramIndex_)) for paramIndex_,
-                tarParam_, evaParam_ in zip(range(len(evaParams_)), tarParams_, evaParams_)]
-            evaQ_ = tf.multiply(evaQActivation_, 1, name = 'evaQ_')
-            tarQ_ = tf.multiply(tarQActivation_, 1, name = 'tarQ_')
-            diff_ = tf.subtract(QTarget_, evaQ_, name = 'diff_')
-            loss_ = tf.reduce_mean(tf.square(diff_), name = 'loss_')
-            gradientQPartialAction_ = tf.gradients(evaQ_, action_, name = 'gradientQPartialAction_')
-            criticLossSummary = tf.summary.scalar("CriticLoss", loss_)
-        with tf.variable_scope("train"):
-            trainOpt_ = tf.train.AdamOptimizer(learningRateCritic, name = 'adamOpt_').minimize(loss_)
-
-        criticInit = tf.global_variables_initializer()
-        
-        criticSummary = tf.summary.merge_all()
-        criticSaver = tf.train.Saver(tf.global_variables())
-    
-    criticWriter = tf.summary.FileWriter('tensorBoard/criticDDPG', graph = criticGraph)
-    criticModel = tf.Session(graph = criticGraph)
-    criticModel.run(criticInit)   
-     
     #transitionFunction = env.TransitionFunction(envModelName, renderOn)
     #isTerminal = env.IsTerminal(maxQPos)
     #reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
@@ -324,18 +257,18 @@ def main():
 
     deepDeterministicPolicyGradient = DeepDeterministicPolicyGradient(numTrajectory, maxEpisode)
 
-    trainedActorModel, trainedCriticModel = deepDeterministicPolicyGradient(actorModel, criticModel, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget,
+    trainedActorModels, trainedCriticModels = deepDeterministicPolicyGradient(actorModels, criticModels, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget,
             gradientPartialActionFromQEvaluation, sampleTrajectory, memory, sampleMiniBatch, trainCritic, trainActor)
 
-    with actorModel.as_default():
-        actorSaver.save(trainedActorModel, savePathActor)
-    with criticModel.as_default():
-        criticSaver.save(trainedCriticModel, savePathCritic)
+    #with actorModel.as_default():
+    #    actorSaver.save(trainedActorModel, savePathActor)
+    #with criticModel.as_default():
+    #    criticSaver.save(trainedCriticModel, savePathCritic)
 
     transitionPlay = cartpole_env.Cartpole_continuous_action_transition_function(renderOn = True)
     samplePlay = SampleTrajectory(maxTimeStep, transitionPlay, isTerminal, reset)
-    actor = lambda state: approximatePolicy(state, trainedActorModel)
-    playEpisode = [samplePlay(actor) for index in range(5)]
+    actors = [lambda state: approximatePolicy(state, trainedActorModel) for trainedActorModel in trainedActorModels]
+    playEpisode = [samplePlay(actors) for index in range(5)]
     print(np.mean([len(playEpisode[index]) for index in range(5)]))
 
 if __name__ == "__main__":

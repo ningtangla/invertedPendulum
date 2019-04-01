@@ -1,4 +1,16 @@
 import numpy as np
+import env
+
+class RewardFunctionTerminalPenalty():
+    def __init__(self, aliveBouns, deathPenalty, isTerminal):
+        self.aliveBouns = aliveBouns
+        self.deathPenalty = deathPenalty
+        self.isTerminal = isTerminal
+    def __call__(self, state, action):
+        reward = self.aliveBouns 
+        if self.isTerminal(state):
+            reward = self.deathPenalty
+        return reward
 
 class RewardFunction():
     def __init__(self, aliveBouns):

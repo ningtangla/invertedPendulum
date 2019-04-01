@@ -73,18 +73,17 @@ class SampleTrajectory():
             #action = actionNoNoise
             # actionBatch shape: batch * action Dimension; only keep action Dimention in shape
             newState = self.transitionFunction(oldState, action) 
-            terminal = self.isTerminal(newState)
+            trajectory.append([oldState, action, newState])
+            terminal = self.isTerminal(oldState)
             if terminal:
                 break
-            trajectory.append([oldState, action, newState])
             oldState = newState
             
         return trajectory
 
-class MemoryForBootstrap():
-    def __init__(self, memoryCapacity, rewardFunction):
+class Memory():
+    def __init__(self, memoryCapacity):
         self.memoryCapacity = memoryCapacity
-        self.rewardFunction = rewardFunction
     def __call__(self, replayBuffer, episode):
         #noLastStateEpisode = [trajectory[ : -1] for trajectory in episode]
         #mergedNoLastStateEpisode = np.concatenate(noLastStateEpisode)
@@ -94,10 +93,7 @@ class MemoryForBootstrap():
         #mergedNoFirstStateEpisode = np.concatenate(noFirstStateEpisode)
         #nextStates, nextActions = list(zip(*mergedNoFirstStateEpisode))
         #episode = list(zip(states, actions, nextStates))
-        rewardsEpisode = np.array([[self.rewardFunction(state, action) for state, action, nextState in trajectory] for trajectory in episode])
-        #rewardsEpisode[:, -1] = -20
-        timeStepEpisode = [[oneTimeTrans + [reward] for oneTimeTrans, reward in zip (trajectory, rewards)] for trajectory, rewards in zip(episode, rewardsEpisode)] 
-        replayBuffer.extend(np.concatenate(timeStepEpisode))
+        replayBuffer.extend(np.concatenate(episode))
 
         if len(replayBuffer) > self.memoryCapacity:
             numDelete = len(replayBuffer) - self.memoryCapacity
@@ -115,13 +111,15 @@ class SampleMiniBatch():
         return miniBatch
 
 class TrainCriticBootstrapTensorflow():
-    def __init__(self, criticWriter, decay):
+    def __init__(self, criticWriter, decay, rewardFunction):
         self.criticWriter = criticWriter
         self.decay = decay
+        self.rewardFunction = rewardFunction
 
     def __call__(self, miniBatch, tarActor, tarCritic, criticModel):
         
-        states, actions, nextStates, rewards = list(zip(*miniBatch))
+        states, actions, nextStates = list(zip(*miniBatch))
+        rewards = np.array([self.rewardFunction(state, action) for state, action in zip(states, actions)])
         stateBatch, actionBatch, nextStateBatch, rewardBatch = np.vstack(states), np.vstack(actions), np.vstack(nextStates), np.vstack(rewards)
         
         nextTargetActionBatch = tarActor(nextStateBatch)
@@ -154,7 +152,7 @@ class TrainActorTensorflow():
         self.actorWriter = actorWriter
     def __call__(self, miniBatch, evaActor, gradientEvaCritic, actorModel):
 
-        states, actions, nextStates, rewards = list(zip(*miniBatch))
+        states, actions, nextStates = list(zip(*miniBatch))
         stateBatch = np.vstack(states)
         evaActorActionBatch = evaActor(stateBatch)
         
@@ -204,7 +202,7 @@ def main():
     actionLow = -2
     actionHigh = 2
     actionRatio = (actionHigh - actionLow) / 2.
-    actionNoise = 0.01
+    actionNoise = 1
     noiseDecay = 0.999
 
     envModelName = 'inverted_pendulum'
@@ -215,17 +213,23 @@ def main():
     qVelInitNoise = 0.001
 
     aliveBouns = 1
+    deathPenalty = -20
     rewardDecay = 0.99
 
     memoryCapacity = 100000
-    numMiniBatch = 64
+    numMiniBatch = 100
 
     numTrajectory = 1 
     maxEpisode = 100000
 
+    numActorFC1Unit = 20
+    numActorFC2Unit = 20
+    numCriticFC1Unit = 200
+    numCriticFC2Unit = 100
     learningRateActor = 0.0001
     learningRateCritic = 0.001
- 
+    l2DecayCritic = 0.001
+
     savePathActor = 'data/tmpModelActor.ckpt'
     savePathCritic = 'data/tmpModelCritic.ckpt'
     
@@ -238,13 +242,13 @@ def main():
             gradientQPartialAction_ = tf.placeholder(tf.float32, [None, numActionSpace], name="gradientQPartialAction_")
 
         with tf.variable_scope("evaluationHidden"):
-            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 20, activation = tf.nn.relu))
-            evaFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = evaFullyConnected1_, units = 20, activation = tf.nn.relu))
+            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = numActorFC1Unit, activation = tf.nn.relu))
+            evaFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = evaFullyConnected1_, units = numActorFC2Unit, activation = tf.nn.relu))
             evaActionActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
             
         with tf.variable_scope("targetHidden"):
-            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 20, activation = tf.nn.relu))
-            tarFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = tarFullyConnected1_, units = 20, activation = tf.nn.relu))
+            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = numActorFC1Unit, activation = tf.nn.relu))
+            tarFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = tarFullyConnected1_, units = numActorFC2Unit, activation = tf.nn.relu))
             tarActionActivation_ = tf.layers.dense(inputs = tarFullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
         
         with tf.variable_scope("outputs"):        
@@ -277,18 +281,18 @@ def main():
             QTarget_ = tf.placeholder(tf.float32, [None, 1], name="QTarget_")
 
         with tf.variable_scope("evaluationHidden"):
-            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 300, activation = tf.nn.relu))
-            numFullyConnected2Units = 100
-            evaStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='evaStateFC1ToFullyConnected2Weights', shape = [300, numFullyConnected2Units])
+            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = numCriticFC1Unit, activation = tf.nn.relu))
+            numFullyConnected2Units = numCriticFC2Unit
+            evaStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='evaStateFC1ToFullyConnected2Weights', shape = [numCriticFC1Unit, numFullyConnected2Units])
             evaActionToFullyConnected2Weights_ = tf.get_variable(name='evaActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
             evaFullyConnected2Bias_ = tf.get_variable(name = 'evaFullyConnected2Bias', shape = [numFullyConnected2Units])
             evaFullyConnected2_ = tf.nn.relu(tf.matmul(evaFullyConnected1_, evaStateFC1ToFullyConnected2Weights_) + tf.matmul(action_, evaActionToFullyConnected2Weights_) + evaFullyConnected2Bias_ )
-            evaQActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = 1, activation = None)
+            evaQActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = 1, activation = None, )
 
         with tf.variable_scope("targetHidden"):
-            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 300, activation = tf.nn.relu))
-            numFullyConnected2Units = 100
-            tarStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='tarStateFC1ToFullyConnected2Weights', shape = [300, numFullyConnected2Units])
+            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = numCriticFC1Unit, activation = tf.nn.relu))
+            numFullyConnected2Units = numCriticFC2Unit
+            tarStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='tarStateFC1ToFullyConnected2Weights', shape = [numCriticFC1Unit, numFullyConnected2Units])
             tarActionToFullyConnected2Weights_ = tf.get_variable(name='tarActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
             tarFullyConnected2Bias_ = tf.get_variable(name = 'tarFullyConnected2Bias', shape = [numFullyConnected2Units])
             tarFullyConnected2_ = tf.nn.relu(tf.matmul(tarFullyConnected1_, tarStateFC1ToFullyConnected2Weights_) + tf.matmul(action_, tarActionToFullyConnected2Weights_) + tarFullyConnected2Bias_ )
@@ -307,7 +311,7 @@ def main():
             gradientQPartialAction_ = tf.gradients(evaQ_, action_, name = 'gradientQPartialAction_')
             criticLossSummary = tf.summary.scalar("CriticLoss", loss_)
         with tf.variable_scope("train"):
-            trainOpt_ = tf.train.AdamOptimizer(learningRateCritic, name = 'adamOpt_').minimize(loss_)
+            trainOpt_ = tf.contrib.opt.AdamWOptimizer(weight_decay = l2DecayCritic, learning_rate = learningRateCritic, name = 'adamOpt_').minimize(loss_)
 
         criticInit = tf.global_variables_initializer()
         
@@ -328,15 +332,15 @@ def main():
     
     sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset, addActionNoise)
     
-    #rewardFunction = reward.RewardFunction(aliveBouns)
-    rewardFunction = reward.CartpoleRewardFunction(aliveBouns)
+    rewardFunction = reward.RewardFunctionTerminalPenalty(aliveBouns, deathPenalty, isTerminal)
+    #rewardFunction = reward.CartpoleRewardFunction(aliveBouns)
     #accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
     
-    memory = MemoryForBootstrap(memoryCapacity, rewardFunction)
+    memory = Memory(memoryCapacity)
 
     sampleMiniBatch = SampleMiniBatch(numMiniBatch)
     
-    trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay)
+    trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, rewardFunction)
     
     trainActor = TrainActorTensorflow(actorWriter) 
 
