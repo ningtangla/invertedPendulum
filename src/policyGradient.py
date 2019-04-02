@@ -118,7 +118,7 @@ def main():
     maxEpisode = 300
 
     learningRate = 0.01
-    summaryPath = 'tensorBoard/1'
+    summaryPath = 'tensorBoard/policyGradient'
 
     savePath = 'data/tmpModel.ckpt'
     

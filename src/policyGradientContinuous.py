@@ -115,7 +115,7 @@ def main():
     maxEpisode = 8
 
     learningRate = 0.01
-    summaryPath = 'tensorBoard/1'
+    summaryPath = 'tensorBoard/policyGradientContinuous'
 
     savePath = 'data/tmpModelGaussian.ckpt'
     

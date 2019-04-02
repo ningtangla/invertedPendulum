@@ -228,7 +228,7 @@ def main():
     numCriticFC2Unit = 100
     learningRateActor = 0.0001
     learningRateCritic = 0.001
-    l2DecayCritic = 0.001
+    l2DecayCritic = 0.0001
 
     savePathActor = 'data/tmpModelActor.ckpt'
     savePathCritic = 'data/tmpModelCritic.ckpt'
@@ -269,7 +269,7 @@ def main():
         actorSummary = tf.summary.merge_all()
         actorSaver = tf.train.Saver(tf.global_variables())
 
-    actorWriter = tf.summary.FileWriter('tensorBoard/actorDDPG', graph = actorGraph)
+    actorWriter = tf.summary.FileWriter('tensorBoard/actorOfflineDDPG', graph = actorGraph)
     actorModel = tf.Session(graph = actorGraph)
     actorModel.run(actorInit)    
     
@@ -318,7 +318,7 @@ def main():
         criticSummary = tf.summary.merge_all()
         criticSaver = tf.train.Saver(tf.global_variables())
     
-    criticWriter = tf.summary.FileWriter('tensorBoard/criticDDPG', graph = criticGraph)
+    criticWriter = tf.summary.FileWriter('tensorBoard/criticOfflineDDPG', graph = criticGraph)
     criticModel = tf.Session(graph = criticGraph)
     criticModel.run(criticInit)   
      
@@ -334,7 +334,6 @@ def main():
     
     rewardFunction = reward.RewardFunctionTerminalPenalty(aliveBouns, deathPenalty, isTerminal)
     #rewardFunction = reward.CartpoleRewardFunction(aliveBouns)
-    #accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
     
     memory = Memory(memoryCapacity)
 

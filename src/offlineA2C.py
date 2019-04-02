@@ -4,8 +4,8 @@ import functools as ft
 #import env
 import cartpole_env
 import reward
-import dataSave 
 import tensorflow_probability as tfp
+import dataSave
 
 def approximatePolicy(stateBatch, actorModel):
     graph = actorModel.graph
@@ -272,7 +272,7 @@ def main():
         actorSummary = tf.summary.merge_all()
         actorSaver = tf.train.Saver(tf.global_variables())
 
-    actorWriter = tf.summary.FileWriter('tensorBoard/actor', graph = actorGraph)
+    actorWriter = tf.summary.FileWriter('tensorBoard/actorOfflineA2C', graph = actorGraph)
     actorModel = tf.Session(graph = actorGraph)
     actorModel.run(actorInit)    
     
@@ -299,7 +299,7 @@ def main():
         criticSummary = tf.summary.merge_all()
         criticSaver = tf.train.Saver(tf.global_variables())
     
-    criticWriter = tf.summary.FileWriter('tensorBoard/critic', graph = criticGraph)
+    criticWriter = tf.summary.FileWriter('tensorBoard/criticOfflineA2C', graph = criticGraph)
     criticModel = tf.Session(graph = criticGraph)
     criticModel.run(criticInit)    
      
