@@ -1,5 +1,5 @@
 import numpy as np
-import env
+# import env
 
 class RewardFunctionTerminalPenalty():
     def __init__(self, aliveBouns, deathPenalty, isTerminal):
