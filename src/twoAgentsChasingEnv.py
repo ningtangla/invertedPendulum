@@ -28,12 +28,12 @@ class TransitionFunction():
         if self.renderOn:
             self.viewer = mujoco.MjViewer(self.simulation)
     def __call__(self, oldState, action, renderOpen = False, numSimulationFrames = 1):
-        oldQPos = oldState[0 : self.numQPos]
-        oldQVel = oldState[self.numQPos : self.numQPos + self.numQVel]
-        self.simulation.data.qpos[:] = oldQPos
-        self.simulation.data.qvel[:] = oldQVel
-        self.simulation.data.ctrl[:] = action
-        #self.simulation.data.ctrl[:] = np.random.uniform(-10,10,24)
+       # oldQPos = oldState[0 : self.numQPos]
+       # oldQVel = oldState[self.numQPos : self.numQPos + self.numQVel]
+       # self.simulation.data.qpos[:] = oldQPos
+       # self.simulation.data.qvel[:] = oldQVel
+       # self.simulation.data.ctrl[:] = action
+        self.simulation.data.ctrl[:] = np.random.uniform(-10,10,4)
 
         for i in range(numSimulationFrames):
             self.simulation.step()
@@ -51,6 +51,6 @@ class IsTerminal():
         return terminal   
 
 if __name__ == '__main__':
-    transite = TransitionFunction('chase10', renderOn = True)
+    transite = TransitionFunction('twoAgentsChasing', renderOn = True)
     for i in range(50000):
         aa = transite([np.zeros(2), np.zeros(2), np.array([0, 0, -0.6]), np.zeros(3)], 0.001)

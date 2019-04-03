@@ -97,7 +97,7 @@ class Memory():
 
         if len(replayBuffer) > self.memoryCapacity:
             numDelete = len(replayBuffer) - self.memoryCapacity
-            del replayBuffer[numDelete : ]
+            del replayBuffer[ : numDelete]
         return replayBuffer
 
 class SampleMiniBatch():
@@ -213,7 +213,7 @@ def main():
     qVelInitNoise = 0.001
 
     aliveBouns = 1
-    deathPenalty = -20
+    deathPenalty = -1
     rewardDecay = 0.99
 
     memoryCapacity = 100000

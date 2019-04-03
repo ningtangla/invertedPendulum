@@ -33,7 +33,7 @@ class SampleTrajectory():
             newState = self.transitionFunction(oldState, action)
             trajectory.append((oldState, action))
             
-            terminal = self.isTerminal(newState)
+            terminal = self.isTerminal(oldState)
             if terminal:
                 break
             oldState = newState
@@ -59,8 +59,9 @@ class TrainTensorflow():
         self.summaryWriter = summaryWriter
     def __call__(self, episode, episodeIndex, normalizedAccumulatedRewardsEpisode, model):
         mergedEpisode = np.concatenate(episode)
+        numBatch = len(mergedEpisode)
         stateEpisode, actionEpisode = list(zip(*mergedEpisode))
-        stateBatch, actionBatch = np.vstack(stateEpisode), np.vstack(actionEpisode)
+        stateBatch, actionBatch = np.array(stateEpisode).reshape(numBatch, -1), np.array(actionEpisode).reshape(numBatch, -1)
         mergedAccumulatedRewardsEpisode = np.concatenate(normalizedAccumulatedRewardsEpisode)
         
         graph = model.graph
@@ -70,8 +71,8 @@ class TrainTensorflow():
         loss_ = graph.get_tensor_by_name('outputs/loss_:0')
         trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
         lossSummary = graph.get_tensor_by_name('outputs/Loss:0')
-        loss, summary, trainOpt = model.run([loss_, lossSummary, trainOpt_], feed_dict={state_: np.vstack(stateBatch),
-                                                                                        action_: np.vstack(actionBatch),
+        loss, summary, trainOpt = model.run([loss_, lossSummary, trainOpt_], feed_dict={state_: stateBatch,
+                                                                                        action_: actionBatch,
                                                                                         accumulatedRewards_: mergedAccumulatedRewardsEpisode
                                                                                         })
         self.summaryWriter.add_summary(summary, episodeIndex)
@@ -109,10 +110,11 @@ def main():
     qVelInitNoise = 0.001
 
     aliveBouns = 1
+    deathPenalty = -20
     rewardDecay = 1
 
     numTrajectory = 1000 
-    maxEpisode = 8
+    maxEpisode = 100
 
     learningRate = 0.01
     summaryPath = 'tensorBoard/policyGradientContinuous'
@@ -155,7 +157,8 @@ def main():
     reset = cartpole_env.cartpole_get_initial_state
     sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset)
 
-    rewardFunction = reward.RewardFunction(aliveBouns) 
+    rewardFunction = reward.RewardFunctionTerminalPenalty(aliveBouns, deathPenalty, isTerminal)
+    #rewardFunction = reward.CartpoleRewardFunction(aliveBouns)
     accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
     train = TrainTensorflow(summaryWriter) 

@@ -38,7 +38,7 @@ class SampleTrajectory():
             newState = self.transitionFunction(oldState, action)
             trajectory.append((oldState, action))
             
-            terminal = self.isTerminal(newState)
+            terminal = self.isTerminal(oldState)
             if terminal:
                 break
             oldState = newState
@@ -71,7 +71,7 @@ class TrainTensorflow():
         actionIndexEpisode = np.array([list(self.actionSpace).index(action) for action in actionEpisode])
         actionLabelEpisode = np.zeros([numBatch, self.numActionSpace])
         actionLabelEpisode[np.arange(numBatch), actionIndexEpisode] = 1
-        stateBatch, actionLabelBatch = np.vstack(stateEpisode), np.vstack(actionLabelEpisode)
+        stateBatch, actionLabelBatch = np.array(stateEpisode).reshape(numBatch, -1), np.array(actionLabelEpisode).reshape(numBatch, -1)
         mergedAccumulatedRewardsEpisode = np.concatenate(normalizedAccumulatedRewardsEpisode)
 
         graph = model.graph
@@ -97,6 +97,7 @@ class PolicyGradient():
             episode = [sampleTrajectory(policy) for index in range(self.numTrajectory)]
             normalizedAccumulatedRewardsEpisode = [normalize(accumulateRewards(trajectory)) for trajectory in episode]
             loss, model = train(episode, normalizedAccumulatedRewardsEpisode, model)
+            print(np.mean([len(trajectory) for trajectory in episode]))
         return model
 
 def main():
@@ -112,10 +113,11 @@ def main():
     qVelInitNoise = 0.001
 
     aliveBouns = 1
+    deathPenalty = 1
     rewardDecay = 1
 
-    numTrajectory = 5
-    maxEpisode = 300
+    numTrajectory = 100
+    maxEpisode = 30
 
     learningRate = 0.01
     summaryPath = 'tensorBoard/policyGradient'
@@ -153,7 +155,8 @@ def main():
     reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
     sampleTrajectory = SampleTrajectory(maxTimeStep, transitionFunction, isTerminal, reset)
 
-    rewardFunction = reward.RewardFunction(aliveBouns) 
+    rewardFunction = reward.RewardFunctionTerminalPenalty(aliveBouns, deathPenalty, isTerminal)
+    #rewardFunction = reward.CartpoleRewardFunction(aliveBouns)
     accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
     train = TrainTensorflow(actionSpace, summaryPath) 

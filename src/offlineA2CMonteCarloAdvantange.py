@@ -31,7 +31,7 @@ class SampleTrajectory():
             action = actionBatch[0]
             # actionBatch shape: batch * action Dimension; only keep action Dimention in shape
             newState = self.transitionFunction(oldState, action)
-            trajectory.append((oldState, action, newState))
+            trajectory.append((oldState, action))
             
             terminal = self.isTerminal(oldState)
             if terminal:
@@ -45,7 +45,7 @@ class AccumulateRewards():
         self.decay = decay
         self.rewardFunction = rewardFunction
     def __call__(self, trajectory):
-        rewards = [self.rewardFunction(state, action) for state, action, nextState in trajectory]
+        rewards = [self.rewardFunction(state, action) for state, action in trajectory]
         
         accumulateReward = lambda accumulatedReward, reward: self.decay * accumulatedReward + reward
         accumulatedRewards = np.array([ft.reduce(accumulateReward, reversed(rewards[TimeT: ])) for TimeT in range(len(rewards))])
@@ -58,8 +58,8 @@ class TrainCriticMonteCarloTensorflow():
     def __call__(self, episode, criticModel):
         mergedEpisode = np.concatenate(episode)
         numBatch = len(mergedEpisode)
-        stateEpisode, actionEpisode, nextStateEpisode = list(zip(*mergedEpisode))
-        stateBatch, actionBatch = np.array(stateEpisode).reshape(numBatch, -1), np.array(actionEpisode).reshape(numBatch, -1)
+        stateEpisode, actionEpisode = list(zip(*mergedEpisode))
+        stateBatch, actionBatch = np.array(stateEpisode).reshape(numBatch, -1)
         
         mergedAccumulatedRewardsEpisode = np.concatenate([self.accumulateRewards(trajectory) for trajectory in episode])
         valueTargetBatch = np.array(mergedAccumulatedRewardsEpisode).reshape(numBatch, -1)
@@ -81,17 +81,24 @@ class TrainCriticBootstrapTensorflow():
         self.decay = decay
         self.rewardFunction = rewardFunction
     def __call__(self, episode, criticModel):
-        mergedEpisode = np.concatenate(episode)
-        numBatch = len(mergedEpisode)
-        stateEpisode, actionEpisode, nextStateEpisode = list(zip(*mergedEpisode))
-        stateBatch, nextStateBatch = np.array(stateEpisode).reshape(numBatch, -1), np.array(nextStateEpisode).reshape(numBatch, -1)
+        
+        noLastStateEpisode = [trajectory[ : -1] for trajectory in episode]
+        mergedNoLastStateEpisode = np.concatenate(noLastStateEpisode)
+        states, actions = list(zip(*mergedNoLastStateEpisode)) 
+        numBatch = len(mergedNoLastStateEpisode)
+
+        noFirstStateEpisode = [trajectory[1 : ] for trajectory in episode]
+        mergedNoFirstStateEpisode = np.concatenate(noFirstStateEpisode)
+        nextStates, nextActions = list(zip(*mergedNoFirstStateEpisode)) 
+ 
+        stateBatch, nextStateBatch = np.array(states).reshape(numBatch, -1), np.array(nextStates).reshape(numBatch, -1)
         
         graph = criticModel.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
         value_ = graph.get_tensor_by_name('outputs/value_/BiasAdd:0')
         nextStateValueBatch = criticModel.run(value_, feed_dict = {state_ : nextStateBatch})
         
-        rewardsEpisode = np.array([self.rewardFunction(state, action) for state, action in zip(stateEpisode, actionEpisode)])
+        rewardsEpisode = np.array([self.rewardFunction(state, action) for state, action in mergedNoLastStateEpisode])
         rewardBatch = np.array(rewardsEpisode).reshape(numBatch, -1)
         valueTargetBatch = rewardBatch + self.decay * nextStateValueBatch
 
@@ -112,31 +119,29 @@ def approximateValue(stateBatch, criticModel):
     valueBatch = criticModel.run(value_, feed_dict = {state_ : stateBatch})
     return valueBatch
 
-class EstimateAdvantageBootstrap():
-    def __init__(self, decay, rewardFunction):
-        self.decay = decay
-        self.rewardFunction = rewardFunction
+class EstimateAdvantageMonteCarlo():
+    def __init__(self, accumulateRewards):
+        self.accumulateRewards = accumulateRewards
     def __call__(self, episode, critic):
         mergedEpisode = np.concatenate(episode)
         numBatch = len(mergedEpisode)
-        stateEpisode, actionEpisode, nextStateEpisode = list(zip(*mergedEpisode))
-        stateBatch, actionBatch, nextStateBatch = np.array(stateEpisode).reshape(numBatch, -1), np.array(actionEpisode).reshape(numBatch, -1), np.array(nextStateEpisode).reshape(numBatch, -1)
+        stateEpisode, actionEpisode = list(zip(*mergedEpisode))
+        stateBatch, actionBatch = np.array(stateEpisode).reshape(numBatch, -1), np.array(actionEpisode).reshape(numBatch, -1)
         
-        rewardsEpisode = np.array([self.rewardFunction(state, action) for state, action in zip(stateEpisode, actionEpisode)])
-        rewardBatch = np.array(rewardsEpisode).reshape(numBatch, -1)
-         
-        advantageBatch = rewardBatch + self.decay * critic(nextStateBatch) - critic(stateBatch)
+        mergedAccumulatedRewardsEpisode = np.concatenate([self.accumulateRewards(trajectory) for trajectory in episode])
+        accumulatedRewardsBatch = np.array(mergedAccumulatedRewardsEpisode).reshape(numBatch, -1)
+
+        advantageBatch = accumulatedRewardsBatch - critic(stateBatch)
         advantages = np.concatenate(advantageBatch)
         return advantages
 
-class TrainActorBootstrapTensorflow():
+class TrainActorMonteCarloTensorflow():
     def __init__(self, actorWriter):
         self.actorWriter = actorWriter
     def __call__(self, episode, advantages, actorModel):
         mergedEpisode = np.concatenate(episode)
-        numBatch = len(mergedEpisode)
-        stateEpisode, actionEpisode, nextStateEpisode = list(zip(*mergedEpisode))
-        stateBatch, actionBatch, nextStateBatch = np.array(stateEpisode).reshape(numBatch, -1), np.array(actionEpisode).reshape(numBatch, -1), np.array(nextStateEpisode).reshape(numBatch, -1)
+        stateEpisode, actionEpisode = list(zip(*mergedEpisode))
+        stateBatch, actionBatch = np.vstack(stateEpisode), np.vstack(actionEpisode)
 
         graph = actorModel.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
@@ -146,7 +151,7 @@ class TrainActorBootstrapTensorflow():
         trainOpt_ = graph.get_operation_by_name('train/adamOpt_')
         loss, trainOpt = actorModel.run([loss_, trainOpt_], feed_dict = {state_ : stateBatch,
                                                                          action_ : actionBatch,
-                                                                         advantages_ : advantages       
+                                                                         advantages_ : advantages            
                                                                          })
         self.actorWriter.flush()
         return loss, actorModel
@@ -187,11 +192,11 @@ def main():
     deathPenalty = 1
     rewardDecay = 0.99
 
-    numTrajectory = 10 
-    maxEpisode = 100000
+    numTrajectory = 200 
+    maxEpisode = 1000
 
-    learningRateActor = 0.000001
-    learningRateCritic = 0.00001
+    learningRateActor = 0.01
+    learningRateCritic = 0.01
  
     savePathActor = 'data/tmpModelActor.ckpt'
     savePathCritic = 'data/tmpModelCritic.ckpt'
@@ -235,7 +240,7 @@ def main():
             valueTarget_ = tf.placeholder(tf.float32, [None, 1], name="valueTarget_")
 
         with tf.name_scope("hidden"):
-            fullyConnected1_ = tf.layers.dense(inputs = state_, units = 30, activation = tf.nn.relu)
+            fullyConnected1_ = tf.layers.dense(inputs = state_, units = 100, activation = tf.nn.relu)
 
         with tf.name_scope("outputs"):        
             value_ = tf.layers.dense(inputs = fullyConnected1_, units = 1, activation = None, name = 'value_')
@@ -269,11 +274,10 @@ def main():
     accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
     trainCritic = TrainCriticMonteCarloTensorflow(criticWriter, accumulateRewards)
-    
     trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, rewardFunction)
-    estimateAdvantage = EstimateAdvantageBootstrap(rewardDecay, rewardFunction)
-    trainActor = TrainActorBootstrapTensorflow(actorWriter) 
-
+    estimateAdvantage = EstimateAdvantageMonteCarlo(accumulateRewards)
+    trainActor = TrainActorMonteCarloTensorflow(actorWriter) 
+    
     actorCritic = OfflineAdvantageActorCritic(numTrajectory, maxEpisode)
 
     trainedActorModel, trainedCriticModel = actorCritic(actorModel, criticModel, approximatePolicy, sampleTrajectory, trainCritic,

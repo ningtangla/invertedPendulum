@@ -148,7 +148,7 @@ class OnlineDeepDeterministicPolicyGradient():
                 newState = self.transitionFunction(oldState, action)
                 timeStep = [oldState, action, newState] 
                 replayBuffer = memory(replayBuffer, timeStep)
-                if len(replayBuffer) >= self.numMiniBatch: 
+                if len(replayBuffer) >= self.numMiniBatch:
                     miniBatch = random.sample(replayBuffer, self.numMiniBatch)
                     tarActor = lambda state: approximatePolicyEvaluation(state, actorModel)
                     tarCritic = lambda state, action: approximateQTarget(state, action, criticModel)
@@ -187,7 +187,7 @@ def main():
     memoryCapacity = 100000
     numMiniBatch = 100
 
-    maxEpisode = 100000
+    maxEpisode = 1
 
     numActorFC1Unit = 20
     numActorFC2Unit = 20
@@ -307,10 +307,19 @@ def main():
     trainActor = TrainActorTensorflow(actorWriter) 
 
     deepDeterministicPolicyGradient = OnlineDeepDeterministicPolicyGradient(maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise)
-
+   
+    #import cProfile, pstats
+    #pr = cProfile.Profile()
+    #pr.enable()
+    
     trainedActorModel, trainedCriticModel = deepDeterministicPolicyGradient(actorModel, criticModel, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget,
             gradientPartialActionFromQEvaluation, memory, trainCritic, trainActor)
-
+    
+    #pr.disable()
+    #profileStats = pstats.Stats(pr)
+    #profileStats.strip_dirs()
+    #profileStats.sort_stats('tottime').print_stats(10)
+    
     with actorModel.as_default():
         actorSaver.save(trainedActorModel, savePathActor)
     with criticModel.as_default():
@@ -318,5 +327,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
