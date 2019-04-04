@@ -1,22 +1,33 @@
 import tensorflow as tf
 import numpy as np
 
-def createDDPGActorGraph(numStateSpace, numActionSpace, softReplaceRatio, agentIndex):
+
+numActorFC1Unit = 20
+numActorFC2Unit = 20
+numCriticFC1Unit = 100
+numCriticFC2Unit = 100
+learningRateActor = 0.0001
+learningRateCritic = 0.001
+l2DecayCritic = 0.0000001
+
+softReplaceRatio = 0.001
+
+def createDDPGActorGraph(numStateSpace, numActionSpace, actionRatio):
 
     actorGraph = tf.Graph()
     with actorGraph.as_default():
         with tf.variable_scope("inputs"):
-            state_ = tf.layers.batch_normalization(tf.placeholder(tf.float32, [None, numStateSpace], name="state_"))
-            gradientQPartialAction_ = tf.placeholder(tf.float32, [None, numActionSpace], name="gradientQPartialAction_")
+            ownState_ = tf.layers.batch_normalization(tf.placeholder(tf.float32, [None, numStateSpace], name="ownState_"))
+            gradientQPartialOwnAction_ = tf.placeholder(tf.float32, [None, numActionSpace], name="gradientQPartialOwnAction_")
 
         with tf.variable_scope("evaluationHidden"):
-            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 20, activation = tf.nn.relu))
-            evaFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = evaFullyConnected1_, units = 20, activation = tf.nn.relu))
+            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = ownState_, units = numActorFC1Unit, activation = tf.nn.relu))
+            evaFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = evaFullyConnected1_, units = numActorFC2Unit, activation = tf.nn.relu))
             evaActionActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
             
         with tf.variable_scope("targetHidden"):
-            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 20, activation = tf.nn.relu))
-            tarFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = tarFullyConnected1_, units = 20, activation = tf.nn.relu))
+            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = ownState_, units = numActorFC1Unit, activation = tf.nn.relu))
+            tarFullyConnected2_ = tf.layers.batch_normalization(tf.layers.dense(inputs = tarFullyConnected1_, units = numActorFC2Unit, activation = tf.nn.relu))
             tarActionActivation_ = tf.layers.dense(inputs = tarFullyConnected2_, units = numActionSpace, activation = tf.nn.tanh)
         
         with tf.variable_scope("outputs"):        
@@ -25,9 +36,9 @@ def createDDPGActorGraph(numStateSpace, numActionSpace, softReplaceRatio, agentI
             numParams_ = tf.constant(len(evaParams_), name = 'numParams_')
             updateTargetParameter_ = [tf.assign(tarParam_, (1 - softReplaceRatio) * tarParam_ + softReplaceRatio * evaParam_, name = 'assign'+str(paramIndex_)) for paramIndex_,
                 tarParam_, evaParam_ in zip(range(len(evaParams_)), tarParams_, evaParams_)]
-            evaAction_ = tf.multiply(evaActionActivation_, actionRatio, name = 'evaAction_')
-            tarAction_ = tf.multiply(tarActionActivation_, actionRatio, name = 'tarAction_')
-            gradientQPartialActorParameter_ = tf.gradients(ys = evaAction_, xs = evaParams_, grad_ys = gradientQPartialAction_, name = 'gradientQPartialActorParameter_')
+            evaOwnAction_ = tf.multiply(evaActionActivation_, actionRatio, name = 'evaOwnAction_')
+            tarOwnAction_ = tf.multiply(tarActionActivation_, actionRatio, name = 'tarOwnAction_')
+            gradientQPartialActorParameter_ = tf.gradients(ys = evaOwnAction_, xs = evaParams_, grad_ys = gradientQPartialOwnAction_, name = 'gradientQPartialActorParameter_')
 
         with tf.variable_scope("train"):
             #-learningRate for ascent
@@ -37,35 +48,39 @@ def createDDPGActorGraph(numStateSpace, numActionSpace, softReplaceRatio, agentI
         actorSummary = tf.summary.merge_all()
         actorSaver = tf.train.Saver(tf.global_variables())
 
-    actorWriter = tf.summary.FileWriter('tensorBoard/' + str(agentIndex) + 'actorDDPG', graph = actorGraph)
     actorModel = tf.Session(graph = actorGraph)
     actorModel.run(actorInit)    
     return actorModel
 
-def createDDPGCriticGraph(numStateSpace, numActionSpace, softReplaceRatio, agentIndex):
+def createDDPGCriticGraph(numStateSpace, numActionSpace, numAgent):
     criticGraph = tf.Graph()
     with criticGraph.as_default():
         with tf.variable_scope("inputs"):
-            state_ = tf.layers.batch_normalization(tf.placeholder(tf.float32, [None, numStateSpace], name="state_"))
-            action_ = tf.stop_gradient(tf.placeholder(tf.float32, [None, numActionSpace]), name='action_')
-            QTarget_ = tf.placeholder(tf.float32, [None, 1], name="QTarget_")
+            allAgentState_ = tf.layers.batch_normalization(tf.placeholder(tf.float32, [None, numStateSpace * numAgent], name="allAgentState_"))
+            ownAction_ = tf.stop_gradient(tf.placeholder(tf.float32, [None, numActionSpace]), name='ownAction_')
+            otherAction_ = tf.stop_gradient(tf.placeholder(tf.float32, [None, numActionSpace * (numAgent -1)]), name='otherAction_')
+            QAim_ = tf.placeholder(tf.float32, [None, 1], name="QAim_")
 
         with tf.variable_scope("evaluationHidden"):
-            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 300, activation = tf.nn.relu))
-            numFullyConnected2Units = 100
-            evaStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='evaStateFC1ToFullyConnected2Weights', shape = [300, numFullyConnected2Units])
-            evaActionToFullyConnected2Weights_ = tf.get_variable(name='evaActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
+            evaFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = allAgentState_, units = numCriticFC1Unit, activation = tf.nn.relu))
+            numFullyConnected2Units = numCriticFC2Unit
+            evaStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='evaStateFC1ToFullyConnected2Weights', shape = [numCriticFC1Unit, numFullyConnected2Units])
+            evaOwnActionToFullyConnected2Weights_ = tf.get_variable(name='evaOwnActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
+            evaOtherActionToFullyConnected2Weights_ = tf.get_variable(name='evaOtherActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
             evaFullyConnected2Bias_ = tf.get_variable(name = 'evaFullyConnected2Bias', shape = [numFullyConnected2Units])
-            evaFullyConnected2_ = tf.nn.relu(tf.matmul(evaFullyConnected1_, evaStateFC1ToFullyConnected2Weights_) + tf.matmul(action_, evaActionToFullyConnected2Weights_) + evaFullyConnected2Bias_ )
-            evaQActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = 1, activation = None)
+            evaFullyConnected2_ = tf.nn.relu(tf.matmul(evaFullyConnected1_, evaStateFC1ToFullyConnected2Weights_) + tf.matmul(ownAction_, evaOwnActionToFullyConnected2Weights_) +
+                    tf.matmul(otherAction_, evaOtherActionToFullyConnected2Weights_) + evaFullyConnected2Bias_ )
+            evaQActivation_ = tf.layers.dense(inputs = evaFullyConnected2_, units = 1, activation = None, )
 
         with tf.variable_scope("targetHidden"):
-            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = state_, units = 300, activation = tf.nn.relu))
-            numFullyConnected2Units = 100
-            tarStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='tarStateFC1ToFullyConnected2Weights', shape = [300, numFullyConnected2Units])
-            tarActionToFullyConnected2Weights_ = tf.get_variable(name='tarActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
+            tarFullyConnected1_ = tf.layers.batch_normalization(tf.layers.dense(inputs = allAgentState_, units = numCriticFC1Unit, activation = tf.nn.relu))
+            numFullyConnected2Units = numCriticFC2Unit
+            tarStateFC1ToFullyConnected2Weights_ = tf.get_variable(name='tarStateFC1ToFullyConnected2Weights', shape = [numCriticFC1Unit, numFullyConnected2Units])
+            tarOwnActionToFullyConnected2Weights_ = tf.get_variable(name='tarOwnActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
+            tarOtherActionToFullyConnected2Weights_ = tf.get_variable(name='tarOtherActionToFullyConnected2Weights', shape = [numActionSpace, numFullyConnected2Units])
             tarFullyConnected2Bias_ = tf.get_variable(name = 'tarFullyConnected2Bias', shape = [numFullyConnected2Units])
-            tarFullyConnected2_ = tf.nn.relu(tf.matmul(tarFullyConnected1_, tarStateFC1ToFullyConnected2Weights_) + tf.matmul(action_, tarActionToFullyConnected2Weights_) + tarFullyConnected2Bias_ )
+            tarFullyConnected2_ = tf.nn.relu(tf.matmul(tarFullyConnected1_, tarStateFC1ToFullyConnected2Weights_) + tf.matmul(ownAction_, tarOwnActionToFullyConnected2Weights_) +
+                    tf.matmul(otherAction_, tarOtherActionToFullyConnected2Weights_) + tarFullyConnected2Bias_ )
             tarQActivation_ = tf.layers.dense(inputs = tarFullyConnected2_, units = 1, activation = None)
         
         with tf.variable_scope("outputs"):        
@@ -76,19 +91,18 @@ def createDDPGCriticGraph(numStateSpace, numActionSpace, softReplaceRatio, agent
                 tarParam_, evaParam_ in zip(range(len(evaParams_)), tarParams_, evaParams_)]
             evaQ_ = tf.multiply(evaQActivation_, 1, name = 'evaQ_')
             tarQ_ = tf.multiply(tarQActivation_, 1, name = 'tarQ_')
-            diff_ = tf.subtract(QTarget_, evaQ_, name = 'diff_')
+            diff_ = tf.subtract(QAim_, evaQ_, name = 'diff_')
             loss_ = tf.reduce_mean(tf.square(diff_), name = 'loss_')
-            gradientQPartialAction_ = tf.gradients(evaQ_, action_, name = 'gradientQPartialAction_')
+            gradientQPartialOwnAction_ = tf.gradients(evaQ_, ownAction_, name = 'gradientQPartialOwnAction_')
             criticLossSummary = tf.summary.scalar("CriticLoss", loss_)
         with tf.variable_scope("train"):
-            trainOpt_ = tf.train.AdamOptimizer(learningRateCritic, name = 'adamOpt_').minimize(loss_)
+            trainOpt_ = tf.contrib.opt.AdamWOptimizer(weight_decay = l2DecayCritic, learning_rate = learningRateCritic, name = 'adamOpt_').minimize(loss_)
 
         criticInit = tf.global_variables_initializer()
         
         criticSummary = tf.summary.merge_all()
         criticSaver = tf.train.Saver(tf.global_variables())
     
-    criticWriter = tf.summary.FileWriter('tensorBoard/' + str(agentIndex) + 'criticDDPG', graph = criticGraph)
     criticModel = tf.Session(graph = criticGraph)
     criticModel.run(criticInit)   
     return criticModel

@@ -13,7 +13,7 @@ class Reset():
         qPos = self.simulation.data.qpos + np.random.uniform(low = -self.qPosInitNoise, high = self.qPosInitNoise, size = len(self.simulation.data.qpos))
         qVel = self.simulation.data.qvel + np.random.uniform(low = -self.qVelInitNoise, high = self.qVelInitNoise, size = len(self.simulation.data.qvel))
         self.simulation.data.qpos[:] = qPos
-        self.simulation.data.qpos[:] = qVel
+        self.simulation.data.qvel[:] = qVel
         self.simulation.forward()
         startState = np.concatenate([qPos, qVel])
         return startState

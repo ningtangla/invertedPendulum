@@ -19,6 +19,14 @@ class RewardFunction():
         reward = self.aliveBouns 
         return reward
 
+class RewardFunctionCompete():
+    def __init__(self, aliveBouns, catchReward):
+        self.aliveBouns = aliveBouns
+        self.catchReward = catchReward
+    def __call__(self, state, action):
+        catchReward = self.catchReward
+        reward = np.array([self.aliveBouns - catchReward, -self.aliveBouns + catchReward])
+        return reward
 
 class CartpoleRewardFunction():
     def __init__(self, aliveBouns):

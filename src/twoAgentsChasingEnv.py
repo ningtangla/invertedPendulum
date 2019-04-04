@@ -9,13 +9,20 @@ class Reset():
         self.simulation = mujoco.MjSim(model)
         self.qPosInitNoise = qPosInitNoise
         self.qVelInitNoise = qVelInitNoise
-    def __call__(self):
-        qPos = self.simulation.data.qpos + np.random.uniform(low = -self.qPosInitNoise, high = self.qPosInitNoise, size = len(self.simulation.data.qpos))
-        qVel = self.simulation.data.qvel + np.random.uniform(low = -self.qVelInitNoise, high = self.qVelInitNoise, size = len(self.simulation.data.qvel))
+    def __call__(self, numAgent):
+        numQPos = len(self.simulation.data.qpos)
+        numQVel = len(self.simulation.data.qvel)
+        numQPosEachAgent = int(numQPos/numAgent)
+        numQVelEachAgent = int(numQVel/numAgent)
+
+        qPos = self.simulation.data.qpos + np.random.uniform(low = -self.qPosInitNoise, high = self.qPosInitNoise, size = numQPos)
+        qVel = self.simulation.data.qvel + np.random.uniform(low = -self.qVelInitNoise, high = self.qVelInitNoise, size = numQVel)
         self.simulation.data.qpos[:] = qPos
-        self.simulation.data.qpos[:] = qVel
+        self.simulation.data.qvel[:] = qVel
         self.simulation.forward()
-        startState = np.concatenate([qPos, qVel])
+        xPos = np.concatenate(self.simulation.data.body_xpos[-numAgent: , :numQPosEachAgent])
+        startState = np.array([np.concatenate([qPos[numQPosEachAgent * agentIndex : numQPosEachAgent * (agentIndex + 1)], xPos[numQPosEachAgent * agentIndex : numQPosEachAgent * (agentIndex + 1)],
+            qVel[numQVelEachAgent * agentIndex : numQVelEachAgent * (agentIndex + 1)]]) for agentIndex in range(numAgent)]) 
         return startState
 
 class TransitionFunction():
@@ -27,27 +34,28 @@ class TransitionFunction():
         self.renderOn = renderOn
         if self.renderOn:
             self.viewer = mujoco.MjViewer(self.simulation)
-    def __call__(self, oldState, action, renderOpen = False, numSimulationFrames = 1):
-       # oldQPos = oldState[0 : self.numQPos]
-       # oldQVel = oldState[self.numQPos : self.numQPos + self.numQVel]
-       # self.simulation.data.qpos[:] = oldQPos
-       # self.simulation.data.qvel[:] = oldQVel
-       # self.simulation.data.ctrl[:] = action
-        self.simulation.data.ctrl[:] = np.random.uniform(-10,10,4)
+    def __call__(self, allAgentOldState, allAgentAction, renderOpen = False, numSimulationFrames = 1):
+        numAgent = len(allAgentOldState)
+        numQPosEachAgent = int(self.numQPos/numAgent)
+        numQVelEachAgent = int(self.numQVel/numAgent)
 
+        self.simulation.data.ctrl[:] = allAgentAction.flatten()
+        
         for i in range(numSimulationFrames):
             self.simulation.step()
             if self.renderOn:
                 self.viewer.render()
         newQPos, newQVel = self.simulation.data.qpos, self.simulation.data.qvel
-        newState = np.concatenate([newQPos, newQVel])
+        newXPos = np.concatenate(self.simulation.data.body_xpos[-numAgent: , :numQPosEachAgent])
+        newState = np.array([np.concatenate([newQPos[numQPosEachAgent * agentIndex : numQPosEachAgent * (agentIndex + 1)], newXPos[numQPosEachAgent * agentIndex : numQPosEachAgent * (agentIndex + 1)],
+            newQVel[numQVelEachAgent * agentIndex : numQVelEachAgent * (agentIndex + 1)]]) for agentIndex in range(numAgent)]) 
         return newState
 
 class IsTerminal():
     def __init__(self, maxQPos):
         self.maxQPos = maxQPos
     def __call__(self, state):
-        terminal = not (np.isfinite(state).all() and np.abs(state[1]) <= self.maxQPos)
+        terminal = False
         return terminal   
 
 if __name__ == '__main__':
