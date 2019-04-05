@@ -9,16 +9,16 @@
 	  <geom name='floor' pos='0 0 -0.4' size='10 10 .1' mass="10000" type='box' condim='3' rgba=".9 .9 .9 1"/>    
 	</body>
 	<body>
-	  <geom name='wall1' pos='-10.1 0 -0.2' size='.1 10.1 .5' mass="10000" type='box' condim='3'/> 
+	  <geom name='wall1' pos='-5.1 0 -0.2' size='.1 10.1 .5' mass="10000" type='box' condim='3'/> 
 	</body>
 	<body>   
-	  <geom name='wall2' pos='10.1 0 -0.2' size='.1 10.1 .5' mass="10000" type='box' condim='3'/>   
+	  <geom name='wall2' pos='5.1 0 -0.2' size='.1 10.1 .5' mass="10000" type='box' condim='3'/>   
 	</body>
 	<body> 
-	  <geom name='wall3' pos='0 -10 -0.2' size='10 .1 .5' mass="10000" type='box' condim='3'/>  
+	  <geom name='wall3' pos='0 -5 -0.2' size='10 .1 .5' mass="10000" type='box' condim='3'/>  
 	</body>
 	<body>  
-	  <geom name='wall4' pos='0 10 -0.2' size='10 .1 .5' mass="10000" type='box' condim='3'/>   
+	  <geom name='wall4' pos='0 5 -0.2' size='10 .1 .5' mass="10000" type='box' condim='3'/>   
 	</body>
  	<body name="prey" pos="0 0 0">
             <joint axis="1 0 0" damping="0" name="prey0" pos="0 0 0" type="slide"/>
@@ -26,7 +26,7 @@
       <!--      <joint axis="0 0 1" damping="0" name="prey2" pos="0 0 0" type="slide"/> -->
             <geom type="sphere" size="0.2" mass="8" rgba="0 1 0 1"/>
         </body>
-	<body name="predator" pos="3.5 3.5 0">           
+	<body name="predator" pos="1.5 1.5 0">           
             <joint axis="1 0 0" damping="0" name="predator0" pos="0 0 0" type="slide"/>
             <joint axis="0 1 0" damping="0" name="predator1" pos="0 0 0" type="slide"/>
       <!--      <joint axis="0 0 1" damping="0" name="predator2" pos="0 0 0" type="slide"/> -->
@@ -45,4 +45,4 @@
         <motor gear="10" joint="predator1"/>
 
     </actuator>
-</mujoco>.
+</mujoco>
