@@ -2,15 +2,15 @@ import tensorflow as tf
 import numpy as np
 
 
-numActorFC1Unit = 20
-numActorFC2Unit = 20
-numCriticFC1Unit = 100
-numCriticFC2Unit = 100
-learningRateActor = 0.0001
-learningRateCritic = 0.001
-l2DecayCritic = 0.0000001
+numActorFC1Unit = 128
+numActorFC2Unit = 128
+numCriticFC1Unit = 128
+numCriticFC2Unit = 128
+learningRateActor = 0.01
+learningRateCritic = 0.01
+l2DecayCritic = 0#0.0001
 
-softReplaceRatio = 0.001
+softReplaceRatio = 0.01
 
 def createDDPGActorGraph(numStateSpace, numActionSpace, actionRatio):
 

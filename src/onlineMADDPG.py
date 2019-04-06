@@ -160,7 +160,7 @@ class TrainCriticBootstrapTensorflow():
 
 
 class MADDPG():
-    def __init__(self, numAgent, maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise):
+    def __init__(self, numAgent, maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise, savePathActors, savePathCritics, saveRate):
         self.numAgent = numAgent
         self.maxEpisode = maxEpisode
         self.maxTimeStep = maxTimeStep
@@ -169,23 +169,31 @@ class MADDPG():
         self.isTerminal = isTerminal
         self.reset = reset
         self.addActionNoise = addActionNoise
+        self.savePathActors = savePathActors
+        self.savePathCritics = savePathCritics
+        self.saveRate = saveRate
 
     def __call__(self, actorModels, criticModels, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget, gradientPartialActionFromQEvaluation,
             memory, trainCritic, trainActor):
         replayBuffer = []
         for episodeIndex in range(self.maxEpisode):
+            print("Starting episode", episodeIndex)
             allAgentOldState = self.reset(self.numAgent)
+            # print("state", allAgentOldState)
             for timeStepIndex in range(self.maxTimeStep):
                 evaActors = [lambda ownState: approximatePolicyEvaluation(ownState, actorModel) for actorModel in actorModels]
                 allAgentActionBatch = [evaActor(ownState.reshape(1, -1)) for evaActor, ownState in zip(evaActors, allAgentOldState)]
+                # print("all agent batch", allAgentActionBatch)
                 allAgentActionPerfect = [actionBatch[0] for actionBatch in allAgentActionBatch]
+                # print("action perfects", allAgentActionPerfect)
                 allAgentAction = np.array([self.addActionNoise(actionPerfect, episodeIndex) for actionPerfect in allAgentActionPerfect])
+                # print("final actions", allAgentAction)
                 allAgentNewState = self.transitionFunction(allAgentOldState, allAgentAction)
                 timeStep = [allAgentOldState, allAgentAction, allAgentNewState]
                 replayBuffer = memory(replayBuffer, timeStep)
 
                 # Start training
-                if len(replayBuffer) >= self.numMiniBatch:
+                if len(replayBuffer) >= self.numMiniBatch and len(replayBuffer) % 100 == 0:
                     miniBatch = random.sample(replayBuffer, self.numMiniBatch)
                     tarActors = [lambda ownState: approximatePolicyEvaluation(ownState, actorModel) for actorModel in actorModels]
                     tarCritics = [lambda allAgentState, ownAction, otherAction: approximateQTarget(allAgentState, ownAction, otherAction, criticModel) for criticModel in criticModels]
@@ -197,9 +205,29 @@ class MADDPG():
                             zip(evaActors, gradientEvaCritics, actorModels, range(self.numAgent))]
 
                 if self.isTerminal(allAgentOldState):
+                    if timeStepIndex != self.maxTimeStep - 1:
+                        print("Target caught at time step: ", timeStepIndex)
                     break
                 allAgentOldState = allAgentNewState
-            print(timeStepIndex)
+                
+
+            # Save checkpoints
+            if episodeIndex % self.saveRate == 0:
+                for i, actorModel in enumerate(actorModels):
+                    with actorModel.as_default():
+                        with actorModel.graph.as_default():
+                            # print(tf.global_variables())
+                            actorSaver = tf.train.Saver(tf.global_variables())
+                        actorSaver.save(actorModel, self.savePathActors[i])
+                
+                for i, criticModel in enumerate(criticModels):
+                    with criticModel.as_default():
+                        with criticModel.graph.as_default():
+                            criticSaver = tf.train.Saver(tf.global_variables())
+                        criticSaver.save(criticModel, self.savePathCritics[i])
+                
+                print("Saved models in episode", episodeIndex)
+
         return actorModels, criticModels
 
 def main():
@@ -215,37 +243,62 @@ def main():
     actionNoise = np.array([0.1, 0.1])
     noiseDecay = 0.999
 
-    numAgents = 1
-    numOtherActionSpace = (numAgents - 1) * numActionSpace
+    # numAgents = 1
+    # numOtherActionSpace = (numAgents - 1) * numActionSpace
     
     envModelName = 'twoAgentsChasing'
     renderOn = False
-    maxTimeStep = 500
-    maxQPos = 0.2
+    restore = True
+    maxTimeStep = 200
+    minXDis = 0.2
     qPosInitNoise = 0.001
     qVelInitNoise = 0.001
 
     aliveBouns = 1
     catchReward = 50
+    disRewardDiscount = 0.2
     rewardDecay = 0.99
 
     memoryCapacity = 100000
-    numMiniBatch = 2
+    numMiniBatch = 512
 
     maxEpisode = 100000
+    saveRate = 100
+
+    savePathActors = ['data/tmpModelActor{}.ckpt'.format(agentIndex) for agentIndex in range(numAgent)]
+    savePathCritics = ['data/tmpModelCritic{}.ckpt'.format(agentIndex) for agentIndex in range(numAgent)]
  
     actorModels = [cg.createDDPGActorGraph(numStateSpace, numActionSpace, actionRatio) for agentIndex in range(numAgent)]  
     criticModels = [cg.createDDPGCriticGraph(numStateSpace, numActionSpace, numAgent) for agentIndex in range(numAgent)]  
     
+    print("actor models", actorModels)
+
+    # Restore if needed.
+    if restore:
+        for actorIndex, actorModel in enumerate(actorModels):
+            with actorModel.as_default():
+                with actorModel.graph.as_default():
+                    actorSaver = tf.train.Saver(tf.global_variables())
+                actorSaver.restore(actorModel, savePathActors[actorIndex])
+        
+        for criticIndex, criticModel in enumerate(criticModels):
+            with criticModel.as_default():
+                with criticModel.graph.as_default():
+                    criticSaver = tf.train.Saver(tf.global_variables())
+                criticSaver.restore(criticModel, savePathCritics[criticIndex])
+            
+        print("Restored models from previous training")
+
+    # TODO
     actorWriter = tf.summary.FileWriter('tensorBoard/actorOnlineMADDPG', graph = actorModels[0].graph)
     criticWriter = tf.summary.FileWriter('tensorBoard/criticOnlineMADDPG', graph = criticModels[0].graph)
     
     transitionFunction = env.TransitionFunction(envModelName, renderOn)
-    isTerminal = env.IsTerminal(maxQPos)
+    isTerminal = env.IsTerminal(minXDis)
     reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
     addActionNoise = AddActionNoise(actionNoise, noiseDecay, actionLow, actionHigh)
      
-    rewardFunction = reward.RewardFunctionCompete(aliveBouns, catchReward)
+    rewardFunction = reward.RewardFunctionCompete(aliveBouns, catchReward, disRewardDiscount, minXDis)
     
     memory = Memory(memoryCapacity)
  
@@ -253,15 +306,11 @@ def main():
     
     trainActor = TrainActorTensorflow(numAgent, actorWriter) 
 
-    maddpg = MADDPG(numAgent, maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise)
+    maddpg = MADDPG(numAgent, maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise, savePathActors, savePathCritics, saveRate)
 
     trainedActorModel, trainedCriticModel = maddpg(actorModels, criticModels, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget,
             gradientPartialOwnActionFromQEvaluation, memory, trainCritic, trainActor)
 
-    with actorModel.as_default():
-        actorSaver.save(trainedActorModel, savePathActor)
-    with criticModel.as_default():
-        criticSaver.save(trainedCriticModel, savePathCritic)
 
 if __name__ == "__main__":
     main()

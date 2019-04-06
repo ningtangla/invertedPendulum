@@ -39,6 +39,11 @@ class TransitionFunction():
         numQPosEachAgent = int(self.numQPos/numAgent)
         numQVelEachAgent = int(self.numQVel/numAgent)
 
+        allAgentOldQPos = allAgentOldState[:, 0:numQPosEachAgent].flatten()
+        allAgentOldQVel = allAgentOldState[:, -numQVelEachAgent:].flatten()
+
+        self.simulation.data.qpos[:] = allAgentOldQPos
+        self.simulation.data.qvel[:] = allAgentOldQVel
         self.simulation.data.ctrl[:] = allAgentAction.flatten()
         
         for i in range(numSimulationFrames):
@@ -51,11 +56,24 @@ class TransitionFunction():
             newQVel[numQVelEachAgent * agentIndex : numQVelEachAgent * (agentIndex + 1)]]) for agentIndex in range(numAgent)]) 
         return newState
 
+def euclideanDistance(pos1, pos2):
+    return np.sqrt(np.sum(np.square(pos1 - pos2)))
+
 class IsTerminal():
-    def __init__(self, maxQPos):
-        self.maxQPos = maxQPos
+    def __init__(self, minXDis):
+        self.minXDis = minXDis
     def __call__(self, state):
-        terminal = False
+        # Assume only two agents. get x position
+        pos0 = state[0][2:4]
+        pos1 = state[1][2:4]
+        distance = euclideanDistance(pos0, pos1)
+        # print(state, type(state), len(state))
+        # print("state", state)
+        # print("state 0", pos0)
+        # print("state 1", pos1)
+        # print("distance", distance)
+        terminal = (distance <= 2 * self.minXDis)
+        # terminal = False
         return terminal   
 
 if __name__ == '__main__':
