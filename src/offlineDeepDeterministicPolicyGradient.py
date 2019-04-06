@@ -119,8 +119,10 @@ class TrainCriticBootstrapTensorflow():
     def __call__(self, miniBatch, tarActor, tarCritic, criticModel):
         
         states, actions, nextStates = list(zip(*miniBatch))
+        numBatch = len(miniBatch)
         rewards = np.array([self.rewardFunction(state, action) for state, action in zip(states, actions)])
-        stateBatch, actionBatch, nextStateBatch, rewardBatch = np.vstack(states), np.vstack(actions), np.vstack(nextStates), np.vstack(rewards)
+        stateBatch, actionBatch, nextStateBatch = np.array(states).reshape(numBatch, -1), np.array(actions).reshape(numBatch, -1), np.array(nextStates).reshape(numBatch, -1),
+        rewardBatch = np.array(rewards).reshape(numBatch, -1)
         
         nextTargetActionBatch = tarActor(nextStateBatch)
 
@@ -153,7 +155,8 @@ class TrainActorTensorflow():
     def __call__(self, miniBatch, evaActor, gradientEvaCritic, actorModel):
 
         states, actions, nextStates = list(zip(*miniBatch))
-        stateBatch = np.vstack(states)
+        numBatch = len(miniBatch)
+        stateBatch = np.array(states).reshape(numBatch, -1)
         evaActorActionBatch = evaActor(stateBatch)
         
         gradientQPartialAction = gradientEvaCritic(stateBatch, evaActorActionBatch)

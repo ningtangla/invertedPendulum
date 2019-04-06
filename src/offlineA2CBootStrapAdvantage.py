@@ -184,14 +184,14 @@ def main():
     qVelInitNoise = 0.001
 
     aliveBouns = 1
-    deathPenalty = 1
+    deathPenalty = -20
     rewardDecay = 0.99
 
     numTrajectory = 10 
     maxEpisode = 100000
 
-    learningRateActor = 0.000001
-    learningRateCritic = 0.00001
+    learningRateActor = 0.001
+    learningRateCritic = 0.01
  
     savePathActor = 'data/tmpModelActor.ckpt'
     savePathCritic = 'data/tmpModelCritic.ckpt'
