@@ -29,9 +29,11 @@ class RewardFunctionCompete():
         self.disDiscountFactor = disDiscountFactor
         self.minXDis = minXDis
     def __call__(self, state, action):
+        # print("state", state)
         pos0 = state[0][2:4]
         pos1 = state[1][2:4]
         distance = euclideanDistance(pos0, pos1)
+        # print(pos0, pos1, distance)
 
         if distance <= 2 * self.minXDis:
             catchReward = self.catchReward

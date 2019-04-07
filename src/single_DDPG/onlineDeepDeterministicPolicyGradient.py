@@ -162,15 +162,16 @@ class OnlineDeepDeterministicPolicyGradient():
                     gradientEvaCritic = lambda state, action: gradientPartialActionFromQEvaluation(state, action, criticModel)
                     gradientQPartialActorParameter, actorModel = trainActor(miniBatch, evaActor, gradientEvaCritic, actorModel)
                 if self.isTerminal(oldState):
-                    if episodeIndex != self.maxEpisode - 1:
-                        print("Target caught at episode", episodeIndex)
-                        catches += 1
-                    else:
-                        print("Episode terminated. Not caught.")
+                    print("Target caught at episode", episodeIndex)
+                    catches += 1
+                    
                     break
 
                 # time.sleep(.002)
                 oldState = newState
+
+                if timeStepIndex == self.maxTimeStep - 1:
+                    print("Episode terminated. Not caught.")
 
             # Save checkpoints
             if episodeIndex != 0 and episodeIndex % self.saveRate == 0:
@@ -219,7 +220,7 @@ def main():
     numMiniBatch = 250
 
     maxEpisode = 100000
-    saveRate = 100
+    saveRate = 50
 
     numActorFC1Unit = 64
     numActorFC2Unit = 64

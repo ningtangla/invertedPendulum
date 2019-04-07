@@ -64,6 +64,7 @@ class TransitionFunctionNaivePredator():
         self.simulation.data.ctrl[:] = bothActions.flatten()
         
         for i in range(numSimulationFrames):
+            time.sleep(0.002)
             self.simulation.step()
             if self.renderOn:
                 self.viewer.render()
@@ -96,9 +97,9 @@ class TransitionFunction():
         self.simulation.data.ctrl[:] = allAgentAction.flatten()
         
         for i in range(numSimulationFrames):
+            time.sleep(0.01)
             self.simulation.step()
             if self.renderOn:
-                time.sleep(0.01)
                 self.viewer.render()
         newQPos, newQVel = self.simulation.data.qpos, self.simulation.data.qvel
         newXPos = np.concatenate(self.simulation.data.body_xpos[-numAgent: , :numQPosEachAgent])
