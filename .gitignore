@@ -1,4 +1,4 @@
 *.pyc
 .DS_Store
-/data/*
+src/data/*
 /tensorBoard/*

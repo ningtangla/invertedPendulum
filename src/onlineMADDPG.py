@@ -73,6 +73,9 @@ class TrainActorTensorflow():
         self.actorWriter = actorWriter
     def __call__(self, miniBatch, evaActor, gradientEvaCritic, actorModel, agentIndex):
 
+        if agentIndex == 0:
+            return actorModel
+
         numBatch = len(miniBatch)
         allAgentStates, allAgentActions, allAgentNextStates = list(zip(*miniBatch))
 
@@ -108,6 +111,9 @@ class TrainCriticBootstrapTensorflow():
         self.rewardFunction = rewardFunction
 
     def __call__(self, miniBatch, tarActors, tarCritic, criticModel, agentIndex):
+
+        if agentIndex == 0:
+            return criticModel
         
         numBatch = len(miniBatch)
         allAgentStates, allAgentActions, allAgentNextStates = list(zip(*miniBatch))
@@ -189,6 +195,7 @@ class MADDPG():
                 allAgentAction = np.array([self.addActionNoise(actionPerfect, episodeIndex) for actionPerfect in allAgentActionPerfect])
                 # print("final actions", allAgentAction)
                 allAgentNewState = self.transitionFunction(allAgentOldState, allAgentAction)
+                # print("state", allAgentNewState)
                 timeStep = [allAgentOldState, allAgentAction, allAgentNewState]
                 replayBuffer = memory(replayBuffer, timeStep)
 
@@ -240,16 +247,16 @@ def main():
     actionLow = np.array([-10, -10])
     actionHigh = np.array([10, 10])
     actionRatio = (actionHigh - actionLow) / 2.
-    actionNoise = np.array([0.1, 0.1])
+    actionNoise = np.array([100.0, 100.0])
     noiseDecay = 0.999
 
     # numAgents = 1
     # numOtherActionSpace = (numAgents - 1) * numActionSpace
     
     envModelName = 'twoAgentsChasing'
-    renderOn = False
-    restore = True
-    maxTimeStep = 200
+    renderOn = True
+    restore = False
+    maxTimeStep = 500
     minXDis = 0.2
     qPosInitNoise = 0.001
     qVelInitNoise = 0.001
@@ -260,7 +267,7 @@ def main():
     rewardDecay = 0.99
 
     memoryCapacity = 100000
-    numMiniBatch = 512
+    numMiniBatch = 2500
 
     maxEpisode = 100000
     saveRate = 100
@@ -268,10 +275,10 @@ def main():
     savePathActors = ['data/tmpModelActor{}.ckpt'.format(agentIndex) for agentIndex in range(numAgent)]
     savePathCritics = ['data/tmpModelCritic{}.ckpt'.format(agentIndex) for agentIndex in range(numAgent)]
  
-    actorModels = [cg.createDDPGActorGraph(numStateSpace, numActionSpace, actionRatio) for agentIndex in range(numAgent)]  
-    criticModels = [cg.createDDPGCriticGraph(numStateSpace, numActionSpace, numAgent) for agentIndex in range(numAgent)]  
+    actorModels = [cg.createDDPGActorGraph(numStateSpace, numActionSpace, actionRatio, agentIndex) for agentIndex in range(numAgent)]  
+    criticModels = [cg.createDDPGCriticGraph(numStateSpace, numActionSpace, numAgent, agentIndex) for agentIndex in range(numAgent)]  
     
-    print("actor models", actorModels)
+    # print("actor models", actorModels)
 
     # Restore if needed.
     if restore:
@@ -293,7 +300,7 @@ def main():
     actorWriter = tf.summary.FileWriter('tensorBoard/actorOnlineMADDPG', graph = actorModels[0].graph)
     criticWriter = tf.summary.FileWriter('tensorBoard/criticOnlineMADDPG', graph = criticModels[0].graph)
     
-    transitionFunction = env.TransitionFunction(envModelName, renderOn)
+    transitionFunction = env.TransitionFunctionNaivePredator(envModelName, renderOn)
     isTerminal = env.IsTerminal(minXDis)
     reset = env.Reset(envModelName, qPosInitNoise, qVelInitNoise)
     addActionNoise = AddActionNoise(actionNoise, noiseDecay, actionLow, actionHigh)

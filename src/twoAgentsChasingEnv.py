@@ -25,6 +25,55 @@ class Reset():
             qVel[numQVelEachAgent * agentIndex : numQVelEachAgent * (agentIndex + 1)]]) for agentIndex in range(numAgent)]) 
         return startState
 
+class TransitionFunctionNaivePredator():
+    def __init__(self, modelName, renderOn): 
+        model = mujoco.load_model_from_path('xmls/' + modelName + '.xml')
+        self.simulation = mujoco.MjSim(model)
+        self.numQPos = len(self.simulation.data.qpos)
+        self.numQVel = len(self.simulation.data.qvel)
+        self.renderOn = renderOn
+        if self.renderOn:
+            self.viewer = mujoco.MjViewer(self.simulation)
+
+    def __call__(self, allAgentOldState, allAgentAction, renderOpen = False, numSimulationFrames = 1):
+        numAgent = len(allAgentOldState)
+        numQPosEachAgent = int(self.numQPos/numAgent)
+        numQVelEachAgent = int(self.numQVel/numAgent)
+
+        # print("state", allAgentOldState)
+        # print("old action", allAgentAction)
+
+        preyState = allAgentOldState[0][numQPosEachAgent: numQPosEachAgent + 2]
+        predatorState = allAgentOldState[1][numQPosEachAgent: numQPosEachAgent + 2]
+        # print("prey state", preyState)
+        # print("predator state", predatorState)
+        predatorAction = preyState - predatorState
+        # print("action", predatorAction)
+        allAgentAction[1] = predatorAction
+        # rand1 = np.random.random()
+        # rand2 = np.random.random()
+        # allAgentAction[0][0] *= rand1
+        # allAgentAction[0][1] *= rand2
+        print("new action", allAgentAction)
+
+        allAgentOldQPos = allAgentOldState[:, 0:numQPosEachAgent].flatten()
+        allAgentOldQVel = allAgentOldState[:, -numQVelEachAgent:].flatten()
+
+        self.simulation.data.qpos[:] = allAgentOldQPos
+        self.simulation.data.qvel[:] = allAgentOldQVel
+        self.simulation.data.ctrl[:] = allAgentAction.flatten()
+        
+        for i in range(numSimulationFrames):
+            self.simulation.step()
+            if self.renderOn:
+                self.viewer.render()
+        newQPos, newQVel = self.simulation.data.qpos, self.simulation.data.qvel
+        newXPos = np.concatenate(self.simulation.data.body_xpos[-numAgent: , :numQPosEachAgent])
+        newState = np.array([np.concatenate([newQPos[numQPosEachAgent * agentIndex : numQPosEachAgent * (agentIndex + 1)], newXPos[numQPosEachAgent * agentIndex : numQPosEachAgent * (agentIndex + 1)],
+            newQVel[numQVelEachAgent * agentIndex : numQVelEachAgent * (agentIndex + 1)]]) for agentIndex in range(numAgent)]) 
+        return newState
+
+
 class TransitionFunction():
     def __init__(self, modelName, renderOn): 
         model = mujoco.load_model_from_path('xmls/' + modelName + '.xml')
