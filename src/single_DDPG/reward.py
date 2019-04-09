@@ -22,6 +22,14 @@ class RewardFunction():
 def euclideanDistance(pos1, pos2):
     return np.sqrt(np.sum(np.square(pos1 - pos2)))
 
+
+def bound(x):
+    if x < 4.5:
+        return 0
+    if x < 5.0:
+        return (x - 4.5) * 10
+    return min(np.exp(2 * x - 10), 10)
+
 class RewardFunctionCompete():
     def __init__(self, aliveBouns, catchReward, disDiscountFactor, minXDis):
         self.aliveBouns = aliveBouns
@@ -34,6 +42,10 @@ class RewardFunctionCompete():
         pos1 = state[1][2:4]
         distance = euclideanDistance(pos0, pos1)
         # print(pos0, pos1, distance)
+        outOfBoundReward = 0.0
+        for i in range(2):
+            x = np.abs(pos0[i])
+            outOfBoundReward += bound(x)
 
         if distance <= 2 * self.minXDis:
             catchReward = self.catchReward
@@ -44,7 +56,7 @@ class RewardFunctionCompete():
 
         # reward = np.array([distanceReward - catchReward, -distanceReward + catchReward])
         # print("reward", reward)
-        reward = distanceReward - catchReward
+        reward = distanceReward - catchReward - outOfBoundReward
         return reward
 
 class CartpoleRewardFunction():

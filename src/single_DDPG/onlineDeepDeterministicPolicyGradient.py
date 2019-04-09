@@ -149,20 +149,36 @@ class OnlineDeepDeterministicPolicyGradient():
         for episodeIndex in range(self.maxEpisode):
             print("Starting episode", episodeIndex)
             episodeRewards.append(0)
+
             oldState = self.reset(numAgent=2)
+
             for timeStepIndex in range(self.maxTimeStep):
                 evaActor = lambda state: approximatePolicyEvaluation(state, actorModel)
                 actionBatch = evaActor(oldState.reshape(1, -1))
                 actionPerfect = actionBatch[0]
                 action = self.addActionNoise(actionPerfect, episodeIndex)
                 newState = self.transitionFunction(oldState, action)
+                newStateRelative = np.array([newState[0] + (newState[1] - newState[0])])
 
                 # for debugging
                 reward = self.rewardFunction(newState, action)
                 episodeRewards[-1] += reward
                 # print("reward", reward)
+                oldStateRelative = np.zeros_like(oldState)
+                oldStateRelative[0] = oldState[0]
+                oldStateRelative[1][:2] = oldState[1][:2]
+                oldStateRelative[1][2] = oldState[1][2] - oldState[0][2]
+                oldStateRelative[1][3] = oldState[1][3] - oldState[0][3]
+                oldStateRelative[1][-2:] = oldState[1][-2:]
 
-                timeStep = [oldState, action, newState] 
+                newStateRelative = np.zeros_like(newState)
+                newStateRelative[0] = newState[0]
+                newStateRelative[1][:2] = newState[1][:2]
+                newStateRelative[1][2] = newState[1][2] - newState[0][2]
+                newStateRelative[1][3] = newState[1][3] - newState[0][3]
+                newStateRelative[1][-2:] = newState[1][-2:]
+
+                timeStep = [oldStateRelative, action, newStateRelative]
                 replayBuffer = memory(replayBuffer, timeStep)
                 if len(replayBuffer) >= self.numMiniBatch:
                     miniBatch = random.sample(replayBuffer, self.numMiniBatch)
@@ -228,18 +244,18 @@ def main():
     aliveBouns = 1
     catchReward = 20
     disRewardDiscount = 0.2
-    rewardDecay = 0.99
+    rewardDecay = 0.999
 
     memoryCapacity = 100000
-    numMiniBatch = 250
+    numMiniBatch = 1024
 
     maxEpisode = 100000
     saveRate = 50
 
-    numActorFC1Unit = 64
-    numActorFC2Unit = 64
-    numCriticFC1Unit = 128
-    numCriticFC2Unit = 128
+    numActorFC1Unit = 128
+    numActorFC2Unit = 128
+    numCriticFC1Unit = 256
+    numCriticFC2Unit = 256
     learningRateActor = 0.001
     learningRateCritic = 0.001
     l2DecayCritic = 0.0000001
