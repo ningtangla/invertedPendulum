@@ -64,18 +64,15 @@ class Memory():
         return replayBuffer
 
 class TrainCriticBootstrapTensorflow():
-    def __init__(self, criticWriter, decay, rewardFunction):
+    def __init__(self, criticWriter, decay, numMiniBatch):
         self.criticWriter = criticWriter
         self.decay = decay
-        self.rewardFunction = rewardFunction
+        self.numBatch = numMiniBatch
 
-    def __call__(self, miniBatch, tarActor, tarCritic, criticModel):
+    def __call__(self, states, actions, nextStates, rewards, tarActor, tarCritic, criticModel):
         
-        states, actions, nextStates = list(zip(*miniBatch))
-        numBatch = len(miniBatch)
-        rewards = np.array([self.rewardFunction(state, action) for state, action in zip(states, actions)])
-        stateBatch, actionBatch, nextStateBatch = np.array(states).reshape(numBatch, -1), np.array(actions).reshape(numBatch, -1), np.array(nextStates).reshape(numBatch, -1),
-        rewardBatch = np.array(rewards).reshape(numBatch, -1)
+        stateBatch, actionBatch, nextStateBatch = np.array(states).reshape(self.numBatch, -1), np.array(actions).reshape(self.numBatch, -1), np.array(nextStates).reshape(self.numBatch, -1),
+        rewardBatch = np.array(rewards).reshape(self.numBatch, -1)
         
         nextTargetActionBatch = tarActor(nextStateBatch)
 
@@ -103,13 +100,12 @@ class TrainCriticBootstrapTensorflow():
         return loss, criticModel
 
 class TrainActorTensorflow():
-    def __init__(self, actorWriter):
+    def __init__(self, actorWriter, numMiniBatch):
         self.actorWriter = actorWriter
-    def __call__(self, miniBatch, evaActor, gradientEvaCritic, actorModel):
+        self.numBatch = numMiniBatch
+    def __call__(self, states, evaActor, gradientEvaCritic, actorModel):
 
-        states, actions, nextStates = list(zip(*miniBatch))
-        numBatch = len(miniBatch)
-        stateBatch = np.array(states).reshape(numBatch, -1)
+        stateBatch = np.array(states).reshape(self.numBatch, -1)
         evaActorActionBatch = evaActor(stateBatch)
         
         gradientQPartialAction = gradientEvaCritic(stateBatch, evaActorActionBatch)
@@ -130,7 +126,7 @@ class TrainActorTensorflow():
         return gradientQPartialActorParameter_, actorModel
 
 class OnlineDeepDeterministicPolicyGradient():
-    def __init__(self, maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise):
+    def __init__(self, maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise, rewardFunction):
         self.maxEpisode = maxEpisode
         self.maxTimeStep = maxTimeStep
         self.numMiniBatch = numMiniBatch
@@ -138,6 +134,7 @@ class OnlineDeepDeterministicPolicyGradient():
         self.isTerminal = isTerminal
         self.reset = reset
         self.addActionNoise = addActionNoise
+        self.rewardFunction = rewardFunction
     def __call__(self, actorModel, criticModel, approximatePolicyEvaluation, approximatePolicyTarget, approximateQTarget, gradientPartialActionFromQEvaluation,
             memory, trainCritic, trainActor):
         replayBuffer = []
@@ -149,15 +146,17 @@ class OnlineDeepDeterministicPolicyGradient():
                 actionPerfect = actionBatch[0]
                 action = self.addActionNoise(actionPerfect, episodeIndex)
                 newState = self.transitionFunction(oldState, action)
-                timeStep = [oldState, action, newState] 
+                reward = self.rewardFunction(oldState, action)
+                timeStep = [oldState, action, newState, reward] 
                 replayBuffer = memory(replayBuffer, timeStep)
                 if len(replayBuffer) >= self.numMiniBatch:
                     miniBatch = random.sample(replayBuffer, self.numMiniBatch)
+                    states, actions, nextStates, rewards = list(zip(*miniBatch))
                     tarActor = lambda state: approximatePolicyEvaluation(state, actorModel)
                     tarCritic = lambda state, action: approximateQTarget(state, action, criticModel)
-                    QLoss, criticModel = trainCritic(miniBatch, tarActor, tarCritic, criticModel)
+                    QLoss, criticModel = trainCritic(states, actions, nextStates, rewards, tarActor, tarCritic, criticModel)
                     gradientEvaCritic = lambda state, action: gradientPartialActionFromQEvaluation(state, action, criticModel)
-                    gradientQPartialActorParameter, actorModel = trainActor(miniBatch, evaActor, gradientEvaCritic, actorModel)
+                    gradientQPartialActorParameter, actorModel = trainActor(states, evaActor, gradientEvaCritic, actorModel)
                 if self.isTerminal(oldState):
                     break
                 oldState = newState
@@ -305,11 +304,11 @@ def main():
     
     memory = Memory(memoryCapacity)
  
-    trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, rewardFunction)
+    trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, numMiniBatch)
     
-    trainActor = TrainActorTensorflow(actorWriter) 
+    trainActor = TrainActorTensorflow(actorWriter, numMiniBatch) 
 
-    deepDeterministicPolicyGradient = OnlineDeepDeterministicPolicyGradient(maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise)
+    deepDeterministicPolicyGradient = OnlineDeepDeterministicPolicyGradient(maxEpisode, maxTimeStep, numMiniBatch, transitionFunction, isTerminal, reset, addActionNoise, rewardFunction)
    
     #import cProfile, pstats
     #pr = cProfile.Profile()

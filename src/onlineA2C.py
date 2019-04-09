@@ -22,10 +22,9 @@ def approximateValue(stateBatch, criticModel):
     return valueBatch
 
 class TrainCriticBootstrapTensorflow():
-    def __init__(self, criticWriter, decay, rewardFunction):
+    def __init__(self, criticWriter, decay):
         self.criticWriter = criticWriter
         self.decay = decay
-        self.rewardFunction = rewardFunction
     def __call__(self, state, action, nextState, criticModel):
         
         stateBatch, actionBatch, nextStateBatch = state.reshape(1, -1), action.reshape(1, -1), nextState.reshape(1, -1)
@@ -49,10 +48,9 @@ class TrainCriticBootstrapTensorflow():
         return loss, criticModel
 
 class EstimateAdvantageBootstrap():
-    def __init__(self, decay, rewardFunction):
+    def __init__(self, decay):
         self.decay = decay
-        self.rewardFunction = rewardFunction
-    def __call__(self, state, action, nextState, critic):
+    def __call__(self, state, action, nextState, reward, critic):
         
         stateBatch, actionBatch, nextStateBatch = state.reshape(1, -1), action.reshape(1, -1), nextState.reshape(1, -1)
         rewardBatch = np.array([self.rewardFunction(state, action) for state, action in zip(stateBatch, actionBatch)]) 
@@ -80,12 +78,13 @@ class TrainActorTensorflow():
         return loss, actorModel
 
 class OnlineAdvantageActorCritic():
-    def __init__(self, maxEpisode, maxTimeStep, transitionFunction, isTerminal, reset):
+    def __init__(self, maxEpisode, maxTimeStep, transitionFunction, isTerminal, reset, rewardFunction):
         self.maxEpisode = maxEpisode
         self.maxTimeStep = maxTimeStep
         self.transitionFunction = transitionFunction
         self.isTerminal = isTerminal
         self.reset = reset
+        self.rewardFunction = rewardFunction
     def __call__(self, actorModel, criticModel, approximatePolicy, trainCritic, approximateValue, estimateAdvantage, trainActor):
         for episodeIndex in range(self.maxEpisode):
             oldState = self.reset()
@@ -94,7 +93,8 @@ class OnlineAdvantageActorCritic():
                 actionBatch = actor(oldState.reshape(1, -1))
                 action = actionBatch[0]
                 newState = self.transitionFunction(oldState, action)
-                valueLoss, criticModel = trainCritic(oldState, action, newState, criticModel)
+                reward = self.rewardFunction(oldState, action)
+                valueLoss, criticModel = trainCritic(oldState, action, newState, reward, criticModel)
                 critic = lambda state: approximateValue(state, criticModel)
                 advantage = estimateAdvantage(oldState, action, newState, critic)
                 policyLoss, actorModel = trainActor(oldState, action, advantage, actorModel)
@@ -202,12 +202,12 @@ def main():
     rewardFunction = reward.RewardFunctionTerminalPenalty(aliveBouns, deathPenalty, isTerminal)
     #rewardFunction = reward.CartpoleRewardFunction(aliveBouns)
  
-    trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, rewardFunction)
-    estimateAdvantage = EstimateAdvantageBootstrap(rewardDecay, rewardFunction)
+    trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay)
+    estimateAdvantage = EstimateAdvantageBootstrap(rewardDecay)
     
     trainActor = TrainActorTensorflow(actorWriter) 
 
-    actorCritic = OnlineAdvantageActorCritic(maxEpisode, maxTimeStep, transitionFunction, isTerminal, reset)
+    actorCritic = OnlineAdvantageActorCritic(maxEpisode, maxTimeStep, transitionFunction, isTerminal, reset, rewardFunction)
 
     trainedActorModel, trainedCriticModel = actorCritic(actorModel, criticModel, approximatePolicy, trainCritic,
             approximateValue, estimateAdvantage, trainActor)
