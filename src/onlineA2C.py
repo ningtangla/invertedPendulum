@@ -25,10 +25,10 @@ class TrainCriticBootstrapTensorflow():
     def __init__(self, criticWriter, decay):
         self.criticWriter = criticWriter
         self.decay = decay
-    def __call__(self, state, action, nextState, criticModel):
+    def __call__(self, state, action, nextState, reward, criticModel):
         
         stateBatch, actionBatch, nextStateBatch = state.reshape(1, -1), action.reshape(1, -1), nextState.reshape(1, -1)
-        rewardBatch = np.array([self.rewardFunction(state, action) for state, action in zip(stateBatch, actionBatch)]) 
+        rewardBatch = np.array(reward).reshape(1, -1) 
 
         graph = criticModel.graph
         state_ = graph.get_tensor_by_name('inputs/state_:0')
@@ -53,7 +53,7 @@ class EstimateAdvantageBootstrap():
     def __call__(self, state, action, nextState, reward, critic):
         
         stateBatch, actionBatch, nextStateBatch = state.reshape(1, -1), action.reshape(1, -1), nextState.reshape(1, -1)
-        rewardBatch = np.array([self.rewardFunction(state, action) for state, action in zip(stateBatch, actionBatch)]) 
+        rewardBatch = np.array(reward).reshape(1, -1) 
         advantageBatch = rewardBatch + self.decay * critic(nextStateBatch) - critic(stateBatch)
         advantages = np.concatenate(advantageBatch)
         return advantages
@@ -96,7 +96,7 @@ class OnlineAdvantageActorCritic():
                 reward = self.rewardFunction(oldState, action)
                 valueLoss, criticModel = trainCritic(oldState, action, newState, reward, criticModel)
                 critic = lambda state: approximateValue(state, criticModel)
-                advantage = estimateAdvantage(oldState, action, newState, critic)
+                advantage = estimateAdvantage(oldState, action, newState, reward, critic)
                 policyLoss, actorModel = trainActor(oldState, action, advantage, actorModel)
                 if self.isTerminal(oldState):
                     break
