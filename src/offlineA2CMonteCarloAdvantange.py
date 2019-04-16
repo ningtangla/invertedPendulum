@@ -59,7 +59,7 @@ class TrainCriticMonteCarloTensorflow():
         mergedEpisode = np.concatenate(episode)
         numBatch = len(mergedEpisode)
         stateEpisode, actionEpisode = list(zip(*mergedEpisode))
-        stateBatch, actionBatch = np.array(stateEpisode).reshape(numBatch, -1)
+        stateBatch = np.array(stateEpisode).reshape(numBatch, -1)
         
         mergedAccumulatedRewardsEpisode = np.concatenate([self.accumulateRewards(trajectory) for trajectory in episode])
         valueTargetBatch = np.array(mergedAccumulatedRewardsEpisode).reshape(numBatch, -1)
@@ -274,7 +274,7 @@ def main():
     accumulateRewards = AccumulateRewards(rewardDecay, rewardFunction)
 
     trainCritic = TrainCriticMonteCarloTensorflow(criticWriter, accumulateRewards)
-    trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, rewardFunction)
+    #trainCritic = TrainCriticBootstrapTensorflow(criticWriter, rewardDecay, rewardFunction)
     estimateAdvantage = EstimateAdvantageMonteCarlo(accumulateRewards)
     trainActor = TrainActorMonteCarloTensorflow(actorWriter) 
     
